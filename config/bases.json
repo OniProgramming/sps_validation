@@ -1,0 +1,23 @@
+{
+  "_comment": "Source text each translation is measured against. A difference between a translation and this text that matches a reading in another edition (RP, WH, SBLGNT) is classified as a textual-base difference, not as a fidelity error.",
+  "WEB": {
+    "Genesis": "WLC",
+    "Ephesians": "RP",
+    "evidence": "WEB NT follows the Robinson-Pierpont Byzantine Majority Text; OT follows the Masoretic Text."
+  },
+  "BSB": {
+    "Genesis": "WLC",
+    "Ephesians": "SBLGNT",
+    "evidence": "BSB OT: Westminster Leningrad Codex. BSB NT: an eclectic critical text drawing on NA, SBLGNT and ECM; SBLGNT is used as the operational base, with divergences matching RP/WH readings treated as textual-base differences."
+  },
+  "OEB": {
+    "Genesis": "WLC",
+    "Ephesians": "WH",
+    "evidence": "OEB NT is a revision of the Twentieth Century New Testament conformed to Westcott-Hort; OT from the Masoretic Text."
+  },
+  "SPS": {
+    "Genesis": "WLC",
+    "Ephesians": "SBLGNT",
+    "evidence": "Stated by the translator: WLC for Hebrew, SBLGNT for Greek."
+  }
+}
