@@ -5,6 +5,8 @@ from sps_validation.docx_reader import Run
 from sps_validation.ingest import _spans, strip_spans
 from sps_validation.align import skeleton
 from sps_validation.features import carries_number, hebrew_features
+from sps_validation.report import krippendorff_nominal
+from sps_validation.validate import perturb
 from sps_validation.segment import _split_clauses, _variant_kind, _wh_text_reading
 
 
@@ -110,6 +112,22 @@ class GreekEditionsTest(unittest.TestCase):
             "orthographic",
         )
         self.assertEqual(_variant_kind([{"text": "φωτὸς", "strong": "5457"}], [{"text": "πνευματος", "strong": "4151"}]), "substantive")
+
+
+class StatisticsTest(unittest.TestCase):
+    def test_krippendorff(self):
+        self.assertEqual(krippendorff_nominal([("a", "a"), ("b", "b"), ("a", "a")]), 1.0)
+        self.assertLess(krippendorff_nominal([("a", "b"), ("b", "a"), ("a", "b"), ("b", "a")]), 0)
+
+
+class PerturbationTest(unittest.TestCase):
+    def test_negation_drop_targets_the_neg_feature(self):
+        import random
+        req = {"units": ["U"], "english": "and he did not eat."}
+        units = {"U": {"tokens": [{"id": "t1", "class": "adv"}]}}
+        feats = {"U": [{"fid": "U/1", "token": "t1", "class": "NEG", "value": "לֹא"}]}
+        new, fid, _ = perturb(req, "negation_drop", units, feats, random.Random(0))
+        self.assertEqual((new, fid), ("and he did eat.", "U/1"))
 
 
 if __name__ == "__main__":

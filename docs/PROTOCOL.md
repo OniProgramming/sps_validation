@@ -170,8 +170,9 @@ information, which is neutral but counted; or (c) unsupported addition, which is
 - **Fidelity** F = 2PR / (P + R).
 - **Sub-scores** by feature class.
 
-Output: one row per sentence per translation, then totals per book and per translation
-(token-weighted). The statistics are:
+Output: one row per sentence per translation (`sentences.csv`), then totals per book and per
+translation. Totals are feature-weighted: every feature of the book counts once. Additions are
+judged per alignment group and shared among its sentences in proportion to their feature counts. The statistics are:
 - 95% bootstrap intervals, resampling sentences;
 - the Friedman test across the four translations, then pairwise Wilcoxon signed-rank tests with
   Holm correction;
@@ -207,12 +208,15 @@ are retained whenever the referent is identifiable, whatever the spelling.
 4. **Two independent judges** from different model families score everything. Their agreement
    is reported per feature class (Krippendorff's α). Disagreements are scored as the mean,
    and the main results are also reported for each judge separately.
-5. **Test–retest.** A random 10% of units is judged a second time. Stability is reported
+5. **Test–retest.** A random 10% of requests per translation (1,364) is judged a second time. Stability is reported
    as α.
 6. **Known-answer (perturbation) tests.** Controlled errors are injected automatically into
-   the English of all four translations, in equal numbers per translation: word deletion, number
-   flip, tense change, negation removal, agent/patient swap, wrong-sense substitution, and
-   unsupported addition. Reported: the rate at which the validator detects each error type
+   the English of all four translations: word deletion, wrong-sense substitution, number flip,
+   negation removal, tense shift (past → present), agent/patient swap, and unsupported addition.
+   There are 40 cases per error type per translation, 1,120 in total (`validate.py`). An error
+   counts as detected when the damaged feature is judged worse than in the unperturbed
+   original. Only cases whose original was judged "retained" are counted. For additions, a
+   new "unsupported" addition must appear. Reported: the rate at which the validator detects each error type
    (sensitivity), and its false alarms on unperturbed text (specificity). This gives a
    measured error rate for the instrument, and shows it is equally sensitive for every
    translation.
@@ -241,8 +245,9 @@ are retained whenever the referent is identifiable, whatever the spelling.
 
 - **Judge 1: Claude Opus 5** (Anthropic, `claude-opus-5`), with structured JSON output and the
   Message Batches API.
-- **Judge 2:** a model from a different company (proposed: OpenAI's current flagship GPT model),
-  given identical instructions, inputs and output schema.
+- **Judge 2: OpenAI GPT** (default `gpt-5`, set with `JUDGE_GPT_MODEL`; reasoning effort
+  high), with strict JSON-schema output and the Batch API. It gets identical instructions,
+  inputs and output schema. The exact model versions used are recorded with every judgement.
 
 Server-side refusal fallbacks are not used, so every judgement comes from the named model.
 Refusals are counted and reported.

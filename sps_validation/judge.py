@@ -9,15 +9,18 @@ One request = one alignment bead (1+ source sentences and their English),
 plus the English immediately before and after (so information moved across a
 boundary is not scored as lost).
 
-Usage
-    python -m sps_validation.judge prepare          # write requests → build/judge/requests/
-    python -m sps_validation.judge pilot N          # run N random requests synchronously
-    python -m sps_validation.judge submit           # send everything as Message Batches
-    python -m sps_validation.judge collect          # fetch batch results → build/judge/results/
+Two judges from different model families receive identical requests:
+    claude   Anthropic, JUDGE_CLAUDE_MODEL (default claude-opus-5), Message Batches API
+    gpt      OpenAI,    JUDGE_GPT_MODEL    (default gpt-5),         Batch API (/v1/responses)
+Refusal fallbacks to other models are deliberately not used: every judgement
+comes from the named model; refusals are recorded and reported.
 
-The judge model is set by JUDGE_MODEL (default: claude-opus-5). Server-side
-refusal fallbacks are deliberately *not* enabled: every judgement must come
-from the named model; refusals are recorded and reported instead.
+Request sets (build/judge/sets/<set>.jsonl): main (validate.py adds perturb, retest).
+
+    python -m sps_validation.judge prepare                 # write the main set
+    python -m sps_validation.judge pilot <judge> N          # N random main requests, synchronously
+    python -m sps_validation.judge run <judge> <set>        # batch submit → wait → collect (resumable)
+Results: build/judge/results/<judge>/<set>.jsonl
 """
 
 from __future__ import annotations
@@ -36,7 +39,10 @@ BASE_EDITION = {  # the edition a translation follows where it differs from WLC/
     ("WEB", "GEN"): "BHS", ("WEB", "EPH"): "RP", ("OEB", "EPH"): "WH",
 }
 OUT = Path("build/judge")
-MODEL = os.environ.get("JUDGE_MODEL", "claude-opus-5")
+JUDGES = {
+    "claude": os.environ.get("JUDGE_CLAUDE_MODEL", "claude-opus-5"),
+    "gpt": os.environ.get("JUDGE_GPT_MODEL", "gpt-5"),
+}
 MAX_TOKENS = 16000
 
 OUTCOMES = ["retained", "partial", "lost", "distorted", "not_in_base"]
@@ -135,17 +141,29 @@ def build_requests() -> list[dict]:
                     continue  # English with no source counterpart: counted as addition by report.py
                 before = beads[k - 1]["english"] if k else ""
                 after = beads[k + 1]["english"] if k + 1 < len(beads) else ""
-                prompt = render(
-                    [units[u] for u in bead["units"]],
-                    [f for u in bead["units"] for f in feats[u]],
-                    bead["english"], before, after,
-                    BASE_EDITION.get((t, code)),
-                )
-                rid = _blind_id(t, code, bead["units"])
-                requests.append({"id": rid, "translation": t, "book": code,
-                                 "units": bead["units"], "prompt": prompt,
-                                 "fids": [f["fid"] for u in bead["units"] for f in feats[u]]})
+                req = {"id": _blind_id(t, code, bead["units"]), "translation": t, "book": code,
+                       "units": bead["units"], "english": bead["english"], "before": before,
+                       "after": after, "edition": BASE_EDITION.get((t, code)),
+                       "fids": [f["fid"] for u in bead["units"] for f in feats[u]]}
+                req["prompt"] = render_request(req, units, feats)
+                requests.append(req)
     return requests
+
+
+def render_request(req: dict, units: dict, feats: dict) -> str:
+    return render(
+        [units[u] for u in req["units"]],
+        [f for u in req["units"] for f in feats[u]],
+        req["english"], req["before"], req["after"], req["edition"],
+    )
+
+
+def load_sources() -> tuple[dict, dict]:
+    units, feats = {}, {}
+    for code in BOOKS:
+        units |= {u["unit_id"]: u for u in _jsonl(f"build/sources/{code}.units.jsonl")}
+        feats |= {f["unit_id"]: f["features"] for f in _jsonl(f"build/features/{code}.features.jsonl")}
+    return units, feats
 
 
 def render(units, features, english, before, after, edition) -> str:
@@ -186,90 +204,193 @@ def _blind_id(t: str, code: str, unit_ids: list[str]) -> str:
     return "r" + hashlib.sha256(f"{t}|{code}|{'|'.join(unit_ids)}".encode()).hexdigest()[:20]
 
 
-# --------------------------------------------------------------------------- API
+# --------------------------------------------------------------------------- judges
 
-def _params(prompt: str) -> dict:
-    return {
-        "model": MODEL,
-        "max_tokens": MAX_TOKENS,
-        "system": [{"type": "text", "text": INSTRUCTIONS, "cache_control": {"type": "ephemeral"}}],
-        "messages": [{"role": "user", "content": prompt}],
-        "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
-    }
+def check_result(data: dict, fids: list[str]) -> dict:
+    got = {f["fid"] for f in data["features"]}
+    missing = [f for f in fids if f not in got]
+    data["features"] = [f for f in data["features"] if f["fid"] in set(fids)]
+    return {"status": "ok" if not missing else "incomplete", "missing": missing, **data}
 
 
-def parse_response(message, fids: list[str]) -> dict:
-    if message.stop_reason == "refusal":
-        return {"status": "refusal"}
-    if message.stop_reason == "max_tokens":
-        return {"status": "truncated"}
-    text = next(b.text for b in message.content if b.type == "text")
-    data = json.loads(text)
-    got = [f["fid"] for f in data["features"]]
-    missing = sorted(set(fids) - set(got))
-    return {"status": "ok" if not missing else "incomplete", "missing": missing, **data,
-            "usage": {"input": message.usage.input_tokens, "output": message.usage.output_tokens,
-                      "cache_read": message.usage.cache_read_input_tokens or 0}}
+class ClaudeJudge:
+    name = "claude"
+
+    def __init__(self):
+        import anthropic
+
+        self.client = anthropic.Anthropic()
+        self.model = JUDGES["claude"]
+
+    def params(self, prompt: str) -> dict:
+        return {
+            "model": self.model,
+            "max_tokens": MAX_TOKENS,
+            "system": [{"type": "text", "text": INSTRUCTIONS, "cache_control": {"type": "ephemeral"}}],
+            "messages": [{"role": "user", "content": prompt}],
+            "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
+        }
+
+    def parse(self, message, fids) -> dict:
+        usage = {"input": message.usage.input_tokens, "output": message.usage.output_tokens,
+                 "cache_read": message.usage.cache_read_input_tokens or 0}
+        if message.stop_reason == "refusal":
+            return {"status": "refusal", "usage": usage}
+        if message.stop_reason == "max_tokens":
+            return {"status": "truncated", "usage": usage}
+        text = next(b.text for b in message.content if b.type == "text")
+        return check_result(json.loads(text), fids) | {"usage": usage}
+
+    def one(self, req: dict) -> dict:
+        return self.parse(self.client.messages.create(**self.params(req["prompt"])), req["fids"])
+
+    def submit(self, reqs: list[dict]) -> list[str]:
+        from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
+        from anthropic.types.messages.batch_create_params import Request
+
+        ids = []
+        for i in range(0, len(reqs), 5000):
+            batch = self.client.messages.batches.create(requests=[
+                Request(custom_id=r["id"], params=MessageCreateParamsNonStreaming(**self.params(r["prompt"])))
+                for r in reqs[i : i + 5000]
+            ])
+            ids.append(batch.id)
+            print("submitted", batch.id, flush=True)
+        return ids
+
+    def done(self, batch_id: str) -> bool:
+        return self.client.messages.batches.retrieve(batch_id).processing_status == "ended"
+
+    def results(self, batch_id: str, fids: dict):
+        for item in self.client.messages.batches.results(batch_id):
+            if item.result.type == "succeeded":
+                yield item.custom_id, self.parse(item.result.message, fids[item.custom_id])
+            else:
+                yield item.custom_id, {"status": item.result.type}
 
 
-def pilot(n: int) -> None:
-    import anthropic
+class GptJudge:
+    name = "gpt"
 
-    client = anthropic.Anthropic()
-    reqs = _jsonl(OUT / "requests.jsonl")
+    def __init__(self):
+        import openai
+
+        self.client = openai.OpenAI()
+        self.model = JUDGES["gpt"]
+
+    def body(self, prompt: str) -> dict:
+        return {
+            "model": self.model,
+            "instructions": INSTRUCTIONS,
+            "input": prompt,
+            "max_output_tokens": MAX_TOKENS,
+            "reasoning": {"effort": os.environ.get("JUDGE_GPT_EFFORT", "high")},
+            "text": {"format": {"type": "json_schema", "name": "judgement", "schema": SCHEMA, "strict": True}},
+        }
+
+    def parse(self, resp: dict, fids) -> dict:
+        usage = resp.get("usage") or {}
+        usage = {"input": usage.get("input_tokens"), "output": usage.get("output_tokens")}
+        if resp.get("status") == "incomplete":
+            return {"status": "truncated", "usage": usage}
+        for item in resp.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for c in item.get("content", []):
+                if c.get("type") == "refusal":
+                    return {"status": "refusal", "usage": usage}
+                if c.get("type") == "output_text":
+                    return check_result(json.loads(c["text"]), fids) | {"usage": usage}
+        return {"status": "empty", "usage": usage}
+
+    def one(self, req: dict) -> dict:
+        resp = self.client.responses.create(**self.body(req["prompt"]))
+        return self.parse(resp.model_dump(), req["fids"])
+
+    def submit(self, reqs: list[dict]) -> list[str]:
+        import io
+
+        ids = []
+        for i in range(0, len(reqs), 5000):
+            lines = [json.dumps({"custom_id": r["id"], "method": "POST", "url": "/v1/responses",
+                                 "body": self.body(r["prompt"])}, ensure_ascii=False)
+                     for r in reqs[i : i + 5000]]
+            f = self.client.files.create(file=("batch.jsonl", io.BytesIO("\n".join(lines).encode())),
+                                         purpose="batch")
+            batch = self.client.batches.create(input_file_id=f.id, endpoint="/v1/responses",
+                                               completion_window="24h")
+            ids.append(batch.id)
+            print("submitted", batch.id, flush=True)
+        return ids
+
+    def done(self, batch_id: str) -> bool:
+        return self.client.batches.retrieve(batch_id).status in ("completed", "failed", "expired", "cancelled")
+
+    def results(self, batch_id: str, fids: dict):
+        batch = self.client.batches.retrieve(batch_id)
+        for file_id in (batch.output_file_id, batch.error_file_id):
+            if not file_id:
+                continue
+            for line in self.client.files.content(file_id).text.splitlines():
+                item = json.loads(line)
+                resp = (item.get("response") or {})
+                if resp.get("status_code") == 200:
+                    yield item["custom_id"], self.parse(resp["body"], fids[item["custom_id"]])
+                else:
+                    yield item["custom_id"], {"status": "errored", "error": item.get("error") or resp}
+
+
+def get_judge(name: str):
+    return {"claude": ClaudeJudge, "gpt": GptJudge}[name]()
+
+
+def pilot(judge_name: str, n: int) -> None:
+    judge = get_judge(judge_name)
+    reqs = _jsonl(OUT / "sets" / "main.jsonl")
     random.Random(n).shuffle(reqs)
-    out = OUT / "pilot"
+    out = OUT / "pilot" / judge_name
     out.mkdir(parents=True, exist_ok=True)
     for r in reqs[:n]:
-        msg = client.messages.create(**_params(r["prompt"]))
-        res = parse_response(msg, r["fids"])
+        res = judge.one(r)
         (out / f"{r['id']}.json").write_text(json.dumps({"request": r, "result": res}, ensure_ascii=False, indent=1))
-        print(r["id"], res["status"], res.get("usage"))
+        print(r["id"], res["status"], res.get("usage"), flush=True)
 
 
-def submit() -> None:
-    import anthropic
-    from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
-    from anthropic.types.messages.batch_create_params import Request
-
-    client = anthropic.Anthropic()
-    reqs = _jsonl(OUT / "requests.jsonl")
-    batches = []
-    for i in range(0, len(reqs), 10000):
-        chunk = reqs[i : i + 10000]
-        batch = client.messages.batches.create(
-            requests=[Request(custom_id=r["id"], params=MessageCreateParamsNonStreaming(**_params(r["prompt"])))
-                      for r in chunk]
-        )
-        batches.append(batch.id)
-        print("submitted", batch.id, len(chunk))
-    (OUT / f"batches.{MODEL}.json").write_text(json.dumps(batches))
-
-
-def collect() -> None:
-    import anthropic
-
-    client = anthropic.Anthropic()
-    reqs = {r["id"]: r for r in _jsonl(OUT / "requests.jsonl")}
-    batch_ids = json.loads((OUT / f"batches.{MODEL}.json").read_text())
-    for bid in batch_ids:
-        while client.messages.batches.retrieve(bid).processing_status != "ended":
-            time.sleep(60)
-    out = OUT / "results" / MODEL
+def run(judge_name: str, set_name: str) -> None:
+    """Submit (unless already submitted), wait, collect; retry failed items once synchronously."""
+    judge = get_judge(judge_name)
+    reqs = {r["id"]: r for r in _jsonl(OUT / "sets" / f"{set_name}.jsonl")}
+    state_path = OUT / "state" / f"{judge_name}.{set_name}.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    if state_path.exists():
+        batch_ids = json.loads(state_path.read_text())
+    else:
+        batch_ids = judge.submit(list(reqs.values()))
+        state_path.write_text(json.dumps(batch_ids))
+    while not all(judge.done(b) for b in batch_ids):
+        time.sleep(60)
+    fids = {i: r["fids"] for i, r in reqs.items()}
+    results = {}
+    for b in batch_ids:
+        for rid, res in judge.results(b, fids):
+            results[rid] = res
+    retry = [i for i in reqs if results.get(i, {}).get("status") not in ("ok", "refusal")]
+    for rid in retry:
+        try:
+            results[rid] = judge.one(reqs[rid]) | {"retried": True}
+        except Exception as e:  # recorded, reported as missing
+            results[rid] = {"status": "failed", "error": str(e)}
+    out = OUT / "results" / judge_name
     out.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
-    with (out / "results.jsonl").open("w", encoding="utf-8") as f:
-        for bid in batch_ids:
-            for item in client.messages.batches.results(bid):
-                r = reqs[item.custom_id]
-                if item.result.type == "succeeded":
-                    res = parse_response(item.result.message, r["fids"])
-                else:
-                    res = {"status": item.result.type}
-                counts[res["status"]] = counts.get(res["status"], 0) + 1
-                f.write(json.dumps({"id": r["id"], "translation": r["translation"], "book": r["book"],
-                                    "units": r["units"], "result": res}, ensure_ascii=False) + "\n")
-    print(counts)
+    with (out / f"{set_name}.jsonl").open("w", encoding="utf-8") as f:
+        for rid, r in reqs.items():
+            res = results.get(rid, {"status": "missing"})
+            counts[res["status"]] = counts.get(res["status"], 0) + 1
+            meta = {k: r[k] for k in ("id", "translation", "book", "units") if k in r}
+            meta |= {k: r[k] for k in ("perturbation", "base_id") if k in r}
+            f.write(json.dumps(meta | {"model": judge.model, "result": res}, ensure_ascii=False) + "\n")
+    print(judge_name, set_name, counts)
 
 
 def _jsonl(path) -> list[dict]:
@@ -281,21 +402,24 @@ def main(argv: list[str]) -> None:
     cmd = argv[1] if len(argv) > 1 else "prepare"
     if cmd == "prepare":
         reqs = build_requests()
-        OUT.mkdir(parents=True, exist_ok=True)
-        with (OUT / "requests.jsonl").open("w", encoding="utf-8") as f:
-            for r in reqs:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        per = {}
+        (OUT / "sets").mkdir(parents=True, exist_ok=True)
+        write_set("main", reqs)
+        per: dict = {}
         for r in reqs:
             per[(r["translation"], r["book"])] = per.get((r["translation"], r["book"]), 0) + 1
         chars = sum(len(r["prompt"]) for r in reqs)
         print(len(reqs), "requests", per, f"~{chars / 3.2 / 1e6:.1f}M prompt tokens (rough)")
     elif cmd == "pilot":
-        pilot(int(argv[2]) if len(argv) > 2 else 5)
-    elif cmd == "submit":
-        submit()
-    elif cmd == "collect":
-        collect()
+        pilot(argv[2], int(argv[3]) if len(argv) > 3 else 5)
+    elif cmd == "run":
+        run(argv[2], argv[3] if len(argv) > 3 else "main")
+
+
+def write_set(name: str, reqs: list[dict]) -> None:
+    (OUT / "sets").mkdir(parents=True, exist_ok=True)
+    with (OUT / "sets" / f"{name}.jsonl").open("w", encoding="utf-8") as f:
+        for r in reqs:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

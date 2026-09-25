@@ -1,0 +1,4 @@
+anthropic>=1.8
+openai>=1.100
+numpy
+scipy
