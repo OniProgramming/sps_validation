@@ -48,7 +48,7 @@ def main(argv: list[str]) -> None:
     if "--pilot" in argv:
         for judge in ("claude", "gpt"):
             step(["sps_validation.judge", "pilot", judge, "20"])
-        print("Pilot done: see build/judge/pilot/<judge>/*.json")
+        step(["sps_validation.judge", "pilot-report"])
         return
     for a in PAID:
         step(a)

@@ -19,6 +19,7 @@ Request sets (build/judge/sets/<set>.jsonl): main (validate.py adds perturb, ret
 
     python -m sps_validation.judge prepare                 # write the main set
     python -m sps_validation.judge pilot <judge> N          # N random main requests, synchronously
+    python -m sps_validation.judge pilot-report             # readable HTML of the pilot, both judges
     python -m sps_validation.judge run <judge> <set>        # batch submit → wait → collect (resumable)
 Results: build/judge/results/<judge>/<set>.jsonl
 """
@@ -356,6 +357,70 @@ def pilot(judge_name: str, n: int) -> None:
         print(r["id"], res["status"], res.get("usage"), flush=True)
 
 
+def pilot_report() -> Path:
+    """Readable side-by-side view of the pilot judgements (both judges)."""
+    import html
+
+    root = OUT / "pilot"
+    judged = {j: {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in (root / j).glob("*.json")}
+              for j in JUDGES if (root / j).exists()}
+    ids = sorted(set().union(*[set(v) for v in judged.values()]))
+    units, feats = load_sources()
+    by_fid = {f["fid"]: f for fl in feats.values() for f in fl}
+    toks = {t["id"]: t for u in units.values() for t in u["tokens"]}
+    agree = total = 0
+    colour = {"retained": "#1b7f3b", "partial": "#a36b00", "lost": "#b3261e", "distorted": "#7b1fa2",
+              "not_in_base": "#666"}
+    rows = []
+    for rid in ids:
+        any_rec = next(v[rid] for v in judged.values() if rid in v)
+        req = any_rec["request"]
+        out = {j: {f["fid"]: f for f in v[rid]["result"].get("features", [])} for j, v in judged.items() if rid in v}
+        adds = {j: v[rid]["result"].get("additions", []) for j, v in judged.items() if rid in v}
+        rows.append(f"<section><h2>{html.escape(req['translation'])} · {html.escape(', '.join(req['units']))}</h2>")
+        rows.append("<p class=src>" + " ".join(html.escape(units[u]["text"]) for u in req["units"]) + "</p>")
+        rows.append(f"<p class=eng>{html.escape(req['english'])}</p>")
+        rows.append("<table><tr><th>word</th><th>information</th>" +
+                    "".join(f"<th>{j}</th>" for j in out) + "</tr>")
+        for fid in req["fids"]:
+            f = by_fid[fid]
+            cells = []
+            vals = []
+            for j in out:
+                o = out[j].get(fid)
+                if o:
+                    vals.append(o["outcome"])
+                    flag = " · translit" if o.get("transliterated") else ""
+                    flag += " · displaced" if o.get("displaced") else ""
+                    cells.append(f"<td><b style='color:{colour.get(o['outcome'], '#000')}'>{o['outcome']}</b>{flag}"
+                                 f"<br><small>«{html.escape(o['english'])}» {html.escape(o['reason'])}</small></td>")
+                else:
+                    cells.append("<td>—</td>")
+            if len(vals) == 2:
+                total += 1
+                agree += vals[0] == vals[1]
+            word = toks.get(f["token"], {}).get("text", "")
+            rows.append(f"<tr><td class=heb>{html.escape(word)}</td><td>{f['class']}: {html.escape(f['value'])}</td>"
+                        + "".join(cells) + "</tr>")
+        rows.append("</table>")
+        for j, a in adds.items():
+            if a:
+                rows.append(f"<p><b>{j} — additions:</b> " + "; ".join(
+                    f"{html.escape(x['type'])}: «{html.escape(x['english'])}»" for x in a) + "</p>")
+        rows.append("</section>")
+    head = (f"<p>{len(ids)} pilot sentences. Same outcome from both judges: "
+            f"<b>{agree}/{total} ({100 * agree / max(total, 1):.0f}%)</b> of information items.</p>") if total else ""
+    page = ("<!doctype html><meta charset=utf-8><title>Pilot judgements</title><style>"
+            "body{font-family:system-ui,sans-serif;max-width:1100px;margin:auto;padding:16px;line-height:1.4}"
+            "table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px;vertical-align:top}"
+            ".src,.heb{font-size:1.2em;direction:rtl;text-align:right}.eng{background:#f3f3f3;padding:6px}"
+            "section{margin-bottom:32px}</style><h1>Pilot judgements</h1>" + head + "".join(rows))
+    path = root / "pilot_report.html"
+    path.write_text(page, encoding="utf-8")
+    print("written", path.resolve(), "|", head.replace("<b>", "").replace("</b>", "").replace("<p>", "").replace("</p>", ""))
+    return path
+
+
 def run(judge_name: str, set_name: str) -> None:
     """Submit (unless already submitted), wait, collect; retry failed items once synchronously."""
     judge = get_judge(judge_name)
@@ -409,6 +474,8 @@ def main(argv: list[str]) -> None:
             per[(r["translation"], r["book"])] = per.get((r["translation"], r["book"]), 0) + 1
         chars = sum(len(r["prompt"]) for r in reqs)
         print(len(reqs), "requests", per, f"~{chars / 3.2 / 1e6:.1f}M prompt tokens (rough)")
+    elif cmd == "pilot-report":
+        pilot_report()
     elif cmd == "pilot":
         pilot(argv[2], int(argv[3]) if len(argv) > 3 else 5)
     elif cmd == "run":
