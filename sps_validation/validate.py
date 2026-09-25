@@ -147,7 +147,7 @@ def perturb(req: dict, kind: str, units, feats, rng: random.Random):
 KINDS = ["delete_word", "wrong_sense", "number_flip", "negation_drop", "tense_shift", "role_swap", "addition"]
 
 
-def build_perturbations() -> list[dict]:
+def build_perturbations(per_cell: int = PER_CELL) -> list[dict]:
     units, feats = load_sources()
     main = _jsonl(OUT / "sets" / "main.jsonl")
     rng = random.Random(SEED)
@@ -167,7 +167,7 @@ def build_perturbations() -> list[dict]:
                 q["prompt"] = render_request(q, units, feats)
                 out.append(q)
                 n += 1
-                if n == PER_CELL:
+                if n == per_cell:
                     break
             print(t, kind, n)
     return out

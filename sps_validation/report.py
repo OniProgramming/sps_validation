@@ -338,14 +338,14 @@ def build(root: Path, out: Path, label: str) -> dict:
         raise SystemExit(f"no judge results in {root}")
     out.mkdir(parents=True, exist_ok=True)
 
-    rows = sentence_rows(main_reqs, main, units, feats)
+    rows = restrict_to_sample(sentence_rows(main_reqs, main, units, feats))
     _write_csv(out / "sentences.csv", rows)
     summary = {"label": label, "judges": {j: next(iter(r.values()))["model"] for j, r in main.items()},
                "status": {j: dict(Counter(x["result"]["status"] for x in r.values())) for j, r in main.items()},
                "totals": totals(rows), "comparisons": comparisons(rows)}
     per_judge = {}
     for j in main:
-        rj = sentence_rows(main_reqs, {j: main[j]}, units, feats)
+        rj = restrict_to_sample(sentence_rows(main_reqs, {j: main[j]}, units, feats))
         per_judge[j] = {"totals": totals(rj), "comparisons": comparisons(rj)}
     summary["per_judge"] = per_judge
     if len(main) == 2:
@@ -361,6 +361,16 @@ def build(root: Path, out: Path, label: str) -> dict:
     (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
     (out / "report.md").write_text(markdown(summary), encoding="utf-8")
     return summary
+
+
+def restrict_to_sample(rows: list[dict]) -> list[dict]:
+    """With a sample (plan.py), only the sampled Genesis sentences and all of Ephesians count,
+    so every translation is scored on exactly the same sentences."""
+    path = OUT / "sample.json"
+    if not path.exists():
+        return rows
+    keep = set(json.loads(path.read_text(encoding="utf-8"))["genesis_sentences"])
+    return [r for r in rows if r["book"] == "EPH" or r["sentence"] in keep]
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:

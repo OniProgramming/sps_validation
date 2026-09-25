@@ -13,10 +13,10 @@ Requires Python ≥ 3.10 and `pip install -r requirements.txt`.
 
 ```sh
 # Place the four input files (not in the repository): data/input/{WEB,BSB,OEB,SPS}.docx
+# Set ANTHROPIC_API_KEY and OPENAI_API_KEY in the environment.
 
-python3 -m sps_validation.run_all            # all free steps: sources → requests
-python3 -m sps_validation.run_all --judge    # + both judges (paid; needs ANTHROPIC_API_KEY, OPENAI_API_KEY) + report
-python3 -m sps_validation.judge pilot claude 20   # optional: try 20 requests first
+python3 -m sps_validation.run_all --pilot    # prepare + 10 trial requests per judge + cost plan (a few cents)
+python3 -m sps_validation.run_all --judge    # sample sized to the budget (--budget 12 per account), asks before spending
 python3 -m sps_validation.report --mock      # pipeline test on random judgements (not a result)
 python3 -m unittest discover -s tests
 ```
@@ -36,6 +36,8 @@ Outputs: `build/report/sentences.csv` (one row per source sentence × translatio
 | `sps_validation/judge.py` | blinded judge requests; Claude and GPT judges via batch APIs |
 | `sps_validation/validate.py` | planted-error (known-answer) tests and test–retest sample |
 | `sps_validation/report.py` | per-sentence scores, totals, bootstrap CIs, Friedman/Wilcoxon, Krippendorff's α |
+| `sps_validation/plan.py` | sizes the random Genesis sample to the budget from the pilot's measured cost |
+| `config/prices.json` | model prices used for the cost estimate |
 | `sps_validation/run_all.py` | runs everything in order |
 | `config/bases.json` | which source text each translation is measured against |
 | `docs/PROTOCOL.md` | study protocol (draft) |

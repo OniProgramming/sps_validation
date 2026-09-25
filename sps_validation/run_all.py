@@ -1,11 +1,12 @@
 """Run the whole study.
 
-    python -m sps_validation.run_all            # free steps only (data -> requests)
-    python -m sps_validation.run_all --pilot    # free steps + 20 trial requests per judge (a few dollars)
-    python -m sps_validation.run_all --judge    # free steps + both judges in full (paid) + the report
+    python -m sps_validation.run_all --pilot    # prepare + 10 trial requests per judge + cost plan (cents)
+    python -m sps_validation.run_all --judge    # prepare + sample sized to the budget + both judges + report
 
-The paid steps need ANTHROPIC_API_KEY and OPENAI_API_KEY. Each judge run is
-resumable: an interrupted run picks up its submitted batches.
+Options: --budget 12 (US$ per account, default 12), --fresh (redo the preparation).
+The paid steps need ANTHROPIC_API_KEY and OPENAI_API_KEY. Before the full run
+the estimated cost is shown and nothing is spent until you type yes. Judge
+runs are resumable: an interrupted run picks up its submitted batches.
 """
 
 from __future__ import annotations
@@ -13,21 +14,17 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
-FREE = [
+PREP = [
     ["sps_validation.sources"],
     ["sps_validation.ingest"],
     ["sps_validation.segment"],
     ["sps_validation.features"],
     ["sps_validation.align"],
     ["sps_validation.judge", "prepare"],
-    ["sps_validation.validate", "prepare"],
 ]
-PAID = [
-    ["sps_validation.judge", "run", judge, s]
-    for judge in ("claude", "gpt")
-    for s in ("main", "retest", "perturb")
-]
+SETS = ("main", "retest", "perturb")
 
 
 def step(args: list[str]) -> None:
@@ -37,22 +34,33 @@ def step(args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> None:
-    for a in FREE:
-        step(a)
+    budget = argv[argv.index("--budget") + 1] if "--budget" in argv else "12"
+    if "--fresh" in argv or not Path("build/judge/sets/all.jsonl").exists():
+        for a in PREP:
+            step(a)
+    else:
+        print("Preparation already done (use --fresh to redo it).")
     if "--judge" not in argv and "--pilot" not in argv:
-        print("Free steps done. Run with --pilot (trial) or --judge (full, paid).")
         return
     missing = [k for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY") if not os.environ.get(k)]
     if missing:
         raise SystemExit(f"missing API keys: {', '.join(missing)}")
     if "--pilot" in argv:
         for judge in ("claude", "gpt"):
-            step(["sps_validation.judge", "pilot", judge, "20"])
+            step(["sps_validation.judge", "pilot", judge, "10"])
         step(["sps_validation.judge", "pilot-report"])
+        step(["sps_validation.plan", "estimate", "--budget", budget])
         return
-    for a in PAID:
-        step(a)
+    step(["sps_validation.plan", "write", "--budget", budget])
+    answer = input("\nStart the paid run with this plan? Type yes to continue: ").strip().lower()
+    if answer != "yes":
+        print("Stopped. Nothing was spent.")
+        return
+    for judge in ("claude", "gpt"):
+        for s in SETS:
+            step(["sps_validation.judge", "run", judge, s])
     step(["sps_validation.report"])
+    print("\nDone. Results: build/report/report.md and build/report/sentences.csv")
 
 
 if __name__ == "__main__":

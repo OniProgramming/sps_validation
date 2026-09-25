@@ -258,6 +258,19 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v0.5 (budget):
+  - Judges changed to the smaller models of the same two companies: Claude Haiku 4.5 and
+    GPT-5-mini (reasoning effort medium). The reason is cost.
+  - Design changed from the full corpus to a random sample:
+    - all of Ephesians (78 sentences), plus a simple random sample of Genesis sentences
+      (fixed seed 20260925), in all four translations;
+    - the sample size is the largest that fits a fixed budget per judge (`plan.py`),
+      computed from the per-request cost measured on the pilot;
+    - totals and tests are computed on the sampled sentences only, so every translation is
+      scored on identical sentences.
+  - Planted errors: 10 per error type per translation (280 in total). Test–retest: 10% of
+    the main requests.
+  - Judge reasons are shortened to at most 12 words.
 - v0.4 (after pilot 1: 20 requests, both judges, 90% item-level agreement):
   - Judge rules clarified where the two judges disagreed systematically. The clarifications
     apply identically to every translation, and none was based on which translation scored

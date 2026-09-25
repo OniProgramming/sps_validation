@@ -10,14 +10,15 @@ plus the English immediately before and after (so information moved across a
 boundary is not scored as lost).
 
 Two judges from different model families receive identical requests:
-    claude   Anthropic, JUDGE_CLAUDE_MODEL (default claude-opus-5), Message Batches API
-    gpt      OpenAI,    JUDGE_GPT_MODEL    (default gpt-5),         Batch API (/v1/responses)
+    claude   Anthropic, JUDGE_CLAUDE_MODEL (default claude-haiku-4-5), Message Batches API
+    gpt      OpenAI,    JUDGE_GPT_MODEL    (default gpt-5-mini),       Batch API (/v1/responses)
 Refusal fallbacks to other models are deliberately not used: every judgement
 comes from the named model; refusals are recorded and reported.
 
-Request sets (build/judge/sets/<set>.jsonl): main (validate.py adds perturb, retest).
+Request sets (build/judge/sets/<set>.jsonl): all (every alignment group);
+plan.py derives main (the sample), retest and perturb from it.
 
-    python -m sps_validation.judge prepare                 # write the main set
+    python -m sps_validation.judge prepare                 # write the 'all' set
     python -m sps_validation.judge pilot <judge> N          # N random main requests, synchronously
     python -m sps_validation.judge pilot-report             # readable HTML of the pilot, both judges
     python -m sps_validation.judge run <judge> <set>        # batch submit → wait → collect (resumable)
@@ -41,8 +42,8 @@ BASE_EDITION = {  # the edition a translation follows where it differs from WLC/
 }
 OUT = Path("build/judge")
 JUDGES = {
-    "claude": os.environ.get("JUDGE_CLAUDE_MODEL", "claude-opus-5"),
-    "gpt": os.environ.get("JUDGE_GPT_MODEL", "gpt-5"),
+    "claude": os.environ.get("JUDGE_CLAUDE_MODEL", "claude-haiku-4-5"),
+    "gpt": os.environ.get("JUDGE_GPT_MODEL", "gpt-5-mini"),
 }
 MAX_TOKENS = 16000
 
@@ -89,7 +90,7 @@ List English content that corresponds to no source word in SOURCE, classified as
 Do not list material that belongs to BEFORE/AFTER.
 
 ## Output
-Return one entry for every feature id given, in the same order, and nothing else. For each: the English words that carry it (empty if none) and a short reason (max. 20 words)."""
+Return one entry for every feature id given, in the same order, and nothing else. For each: the English words that carry it (empty if none) and a short reason (max. 12 words)."""
 
 SCHEMA = {
     "type": "object",
@@ -289,7 +290,7 @@ class GptJudge:
             "instructions": INSTRUCTIONS,
             "input": prompt,
             "max_output_tokens": MAX_TOKENS,
-            "reasoning": {"effort": os.environ.get("JUDGE_GPT_EFFORT", "high")},
+            "reasoning": {"effort": os.environ.get("JUDGE_GPT_EFFORT", "medium")},
             "text": {"format": {"type": "json_schema", "name": "judgement", "schema": SCHEMA, "strict": True}},
         }
 
@@ -351,13 +352,16 @@ def get_judge(name: str):
 
 def pilot(judge_name: str, n: int) -> None:
     judge = get_judge(judge_name)
-    reqs = _jsonl(OUT / "sets" / "main.jsonl")
+    reqs = _jsonl(OUT / "sets" / "all.jsonl")
     random.Random(n).shuffle(reqs)
     out = OUT / "pilot" / judge_name
     out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("*.json"):  # a pilot reflects the current model only
+        old.unlink()
     for r in reqs[:n]:
         res = judge.one(r)
-        (out / f"{r['id']}.json").write_text(json.dumps({"request": r, "result": res}, ensure_ascii=False, indent=1), encoding="utf-8")
+        (out / f"{r['id']}.json").write_text(json.dumps({"request": r, "model": judge.model, "result": res},
+                                                        ensure_ascii=False, indent=1), encoding="utf-8")
         print(r["id"], res["status"], res.get("usage"), flush=True)
 
 
@@ -472,7 +476,7 @@ def main(argv: list[str]) -> None:
     if cmd == "prepare":
         reqs = build_requests()
         (OUT / "sets").mkdir(parents=True, exist_ok=True)
-        write_set("main", reqs)
+        write_set("all", reqs)
         per: dict = {}
         for r in reqs:
             per[(r["translation"], r["book"])] = per.get((r["translation"], r["book"]), 0) + 1
