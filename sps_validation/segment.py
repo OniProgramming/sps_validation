@@ -413,7 +413,7 @@ def main(argv: list[str]) -> None:
     for code, units, base, names in (("GEN", gen, "WLC", ("BHS",)), ("EPH", eph, "SBLGNT", ("RP", "WH"))):
         for name in names:
             kinds = Counter(v["kind"] for u in units for v in u["variants"][name])
-            print(f"{code}: {sum(kinds.values())} word-level differences {base}↔{name} {dict(kinds)}")
+            print(f"{code}: {sum(kinds.values())} word-level differences {base}<->{name} {dict(kinds)}")
 
 
 if __name__ == "__main__":

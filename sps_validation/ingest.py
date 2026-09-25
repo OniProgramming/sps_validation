@@ -304,7 +304,7 @@ def main(argv: list[str]) -> None:
     for r in sps:
         for s in r["spans"]:
             kinds[s["type"]] = kinds.get(s["type"], 0) + 1
-    print(f"SPS: {len(sps)} paragraphs, apparatus spans {kinds} (eval_text keeps transliterations and [[…]] only)")
+    print(f"SPS: {len(sps)} paragraphs, apparatus spans {kinds} (eval_text keeps transliterations and [[...]] only)")
 
 
 def _write(path: Path, records: list[dict]) -> None:

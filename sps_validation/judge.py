@@ -352,7 +352,7 @@ def pilot(judge_name: str, n: int) -> None:
     out.mkdir(parents=True, exist_ok=True)
     for r in reqs[:n]:
         res = judge.one(r)
-        (out / f"{r['id']}.json").write_text(json.dumps({"request": r, "result": res}, ensure_ascii=False, indent=1))
+        (out / f"{r['id']}.json").write_text(json.dumps({"request": r, "result": res}, ensure_ascii=False, indent=1), encoding="utf-8")
         print(r["id"], res["status"], res.get("usage"), flush=True)
 
 
@@ -363,10 +363,10 @@ def run(judge_name: str, set_name: str) -> None:
     state_path = OUT / "state" / f"{judge_name}.{set_name}.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     if state_path.exists():
-        batch_ids = json.loads(state_path.read_text())
+        batch_ids = json.loads(state_path.read_text(encoding="utf-8"))
     else:
         batch_ids = judge.submit(list(reqs.values()))
-        state_path.write_text(json.dumps(batch_ids))
+        state_path.write_text(json.dumps(batch_ids), encoding="utf-8")
     while not all(judge.done(b) for b in batch_ids):
         time.sleep(60)
     fids = {i: r["fids"] for i, r in reqs.items()}

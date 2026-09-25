@@ -358,7 +358,7 @@ def build(root: Path, out: Path, label: str) -> dict:
     if pert:
         summary["perturbation"] = perturbation_summary(_jsonl(OUT / "sets" / "perturb.jsonl"), pert, main)
     summary["rule_crosscheck"] = rule_crosscheck(main_reqs, main, units, feats)
-    (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
+    (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
     (out / "report.md").write_text(markdown(summary), encoding="utf-8")
     return summary
 

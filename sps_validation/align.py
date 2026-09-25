@@ -268,7 +268,7 @@ def main(argv: list[str]) -> None:
     out = Path("build/align")
     out.mkdir(parents=True, exist_ok=True)
     summary_path = out / "summary.json"
-    summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
     for code in ("GEN", "EPH"):
         units = [json.loads(l) for l in open(f"build/sources/{code}.units.jsonl", encoding="utf-8")]
         by_id = {u["unit_id"]: u for u in units}
@@ -285,7 +285,7 @@ def main(argv: list[str]) -> None:
                 line |= verse_accuracy(beads, by_id) | piece_accuracy(beads, pieces, by_id)
             summary[f"{t}.{code}"] = line
             print(t, code, line, flush=True)
-    summary_path.write_text(json.dumps(summary, indent=2))
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
