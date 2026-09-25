@@ -7,3 +7,6 @@ build/
 __pycache__/
 *.pyc
 .pytest_cache/
+# IDE settings and local secrets (API keys must never be committed)
+.idea/
+.env
