@@ -359,7 +359,14 @@ def build(root: Path, out: Path, label: str) -> dict:
         summary["perturbation"] = perturbation_summary(_jsonl(OUT / "sets" / "perturb.jsonl"), pert, main)
     summary["rule_crosscheck"] = rule_crosscheck(main_reqs, main, units, feats)
     (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
-    (out / "report.md").write_text(markdown(summary), encoding="utf-8")
+    tables = article_tables(summary, rows)
+    summary["article_tables"] = tables
+    for name, t in tables.items():
+        with (out / f"{name}.csv").open("w", newline="", encoding="utf-8-sig") as f:  # -sig: opens cleanly in Excel
+            w = csv.writer(f)
+            w.writerow(t["columns"])
+            w.writerows(t["rows"])
+    (out / "report.md").write_text(tables_markdown(tables) + "\n" + markdown(summary), encoding="utf-8")
     return summary
 
 
@@ -378,6 +385,73 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
+
+
+GROUPS = {
+    "Lexical meaning (semantic field)": ["LEX"],
+    "Verbal grammar (aspect, stem, voice, mood)": ["ASP", "STEM", "VOICE", "MOOD"],
+    "Reference and number (person, number, definiteness)": ["REF", "NUM", "DEF"],
+    "Relations and syntax (relations, who-does-what, negation)": ["REL", "ARG", "NEG"],
+}
+BOOKS_LABEL = {"GEN": "Genesis", "EPH": "Ephesians", "ALL": "Both books"}
+
+
+def article_tables(s: dict, rows: list[dict]) -> dict:
+    """The four comparison tables for the article (also written as table1..4.csv)."""
+    T = s["totals"]
+    pct = lambda x: round(100 * x, 1)
+    t1 = {"title": "Table 1. Overall fidelity to the source text (%, 95% confidence interval)",
+          "columns": ["Book", "Translation", "Sentences", "Information items", "Retained (retention)",
+                      "Accuracy", "Fidelity", "Fidelity 95% CI"], "rows": []}
+    for b in ("GEN", "EPH", "ALL"):
+        for t in TRANSLATIONS:
+            x = T.get(f"{b}.{t}")
+            if x:
+                t1["rows"].append([BOOKS_LABEL[b], t, x["sentences"], x["features"], pct(x["retention"]),
+                                   pct(x["accuracy"]), pct(x["fidelity"]),
+                                   f"{pct(x['fidelity_CI95'][0])}–{pct(x['fidelity_CI95'][1])}"])
+    t2 = {"title": "Table 2. Retention by type of information, both books (%)",
+          "columns": ["Type of information"] + list(TRANSLATIONS), "rows": []}
+    for label, classes in GROUPS.items():
+        line = [label]
+        for t in TRANSLATIONS:
+            rs = [r for r in rows if r["translation"] == t]
+            n = sum(r[f"n_{c}"] for r in rs for c in classes)
+            v = sum(r[f"R_{c}"] * r[f"n_{c}"] for r in rs for c in classes if r[f"n_{c}"])
+            line.append(pct(v / n) if n else "—")
+        t2["rows"].append(line)
+    t3 = {"title": "Table 3. What happens to the source information, both books",
+          "columns": ["Translation", "Retained %", "Partly retained %", "Lost %", "Distorted %",
+                      "Unsupported additions per 100 items"], "rows": []}
+    for t in TRANSLATIONS:
+        rs = [r for r in rows if r["translation"] == t]
+        n = sum(r["features"] for r in rs)
+        if n:
+            t3["rows"].append([t] + [pct(sum(r[k] for r in rs) / n) for k in ("retained", "partial", "lost", "distorted")]
+                              + [round(100 * sum(r["unsupported_additions"] for r in rs) / n, 2)])
+    t4 = {"title": "Table 4. Are the differences real? Pairwise comparison of per-sentence fidelity",
+          "columns": ["Book", "Pair", "Median difference", "Effect size (r)", "p (Holm)", "Significant (p < .05)"],
+          "rows": [], "notes": []}
+    for b in ("GEN", "EPH", "ALL"):
+        c = s["comparisons"].get(b)
+        if not c:
+            continue
+        t4["notes"].append(f"{BOOKS_LABEL[b]}: Friedman χ² = {c['friedman_chi2']}, p = {c['friedman_p']:.3g}, "
+                           f"Kendall's W = {c['kendall_W']}, n = {c['sentences']} sentences.")
+        for p in c["pairwise"]:
+            t4["rows"].append([BOOKS_LABEL[b], p["pair"], p["median_diff"], p["r_rb"], f"{p['p_holm']:.3g}",
+                               "yes" if p["p_holm"] < 0.05 else "no"])
+    return {"table1": t1, "table2": t2, "table3": t3, "table4": t4}
+
+
+def tables_markdown(tables: dict) -> str:
+    L = ["# Article tables", ""]
+    for t in tables.values():
+        L += [f"**{t['title']}**", "", "| " + " | ".join(map(str, t["columns"])) + " |",
+              "|" + "---|" * len(t["columns"])]
+        L += ["| " + " | ".join(map(str, r)) + " |" for r in t["rows"]]
+        L += [""] + [f"_{n}_" for n in t.get("notes", [])] + [""]
+    return "\n".join(L)
 
 
 def markdown(s: dict) -> str:
