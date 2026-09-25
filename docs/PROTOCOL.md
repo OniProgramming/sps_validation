@@ -258,6 +258,18 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v0.4 (after pilot 1: 20 requests, both judges, 90% item-level agreement):
+  - Judge rules clarified where the two judges disagreed systematically. The clarifications
+    apply identically to every translation, and none was based on which translation scored
+    higher:
+    - REF: gender or number distinctions that English cannot mark are not required;
+    - NUM: English plural-form nouns and collective singulars count as the same count;
+      adverbial nouns carry no count;
+    - STEM/VOICE: an English verb that has the stem's meaning suffices;
+    - fixed expressions: scored by what the words contribute, while live images count
+      as information;
+    - REL: a relation conveyed by clause order or sentence structure is retained;
+    - proper names: spelling and vocalisation differences don't matter.
 - v0.3:
   - SPS evaluated text keeps transliterations and `[[…]]` only; all brace content and `*`
     are removed.

@@ -70,12 +70,16 @@ Outcomes:
 
 Rules that apply equally to every translation:
 1. Words written in the English text in a non-English form (transliterations such as *elohim*, *nephesh*, *charis*) are judged by the same criterion as any other word: is the information conveyed to a reader of this English text? Decide from the text itself (context, established English usage). Set transliterated=true for such features.
-2. Proper names: a name is retained if the person, place or people referred to is identifiable, whatever its spelling.
+2. Proper names: a name is retained if the person, place or people referred to is identifiable, whatever its spelling or vocalisation (e.g. Hushim / Hashum, Yosef / Joseph). It is distorted only if it points to a different referent.
 3. An explicit alternative in the text such as [[a|the]] or [[x / y]] presents both readings. If the source is genuinely open between them, the ambiguity is conveyed.
 4. If the information is conveyed in BEFORE or AFTER instead of ENGLISH (the alignment boundary fell differently), score it as if it were in ENGLISH and set displaced=true.
 5. ARG: retained when the English makes clear who does what to whom, in any construction (active, passive, nominalisation…).
-6. Grammatical features the English cannot express grammatically (e.g. a Hebrew stem, a Greek middle) are retained when their meaning contribution is conveyed by other means, and lost when it is not.
-7. Do not reward or penalise style, fluency, archaism or modernity.
+6. Grammatical features the English cannot express grammatically are retained when their meaning contribution is conveyed by other means, and lost when it is not. STEM and VOICE: retained when the English verb or construction has the meaning the verb has in that stem or voice (causative, passive, reflexive, a distinct lexical meaning…); a stem that is simply the verb's ordinary form needs no additional English marker.
+7. REF: retained when the English makes clear who is meant. Distinctions English cannot mark (masculine vs feminine "you", singular vs plural "you", the gender of "they") are not required when the referent is clear.
+8. NUM: retained when the English conveys the same count. An English noun plural in form but naming the same thing (wages, clothes) and an English collective singular count as the same count. Where no count is at issue (e.g. a noun used adverbially), NUM is retained unless the English asserts a different count.
+9. Fixed expressions: score what each word contributes to the meaning in this context. In expressions whose words no longer carry their separate literal sense (compound prepositions such as לִפְנֵי "before", fixed time or place expressions), a rendering that conveys the whole expression retains the features of its parts. Where the source uses a live image or metaphor, the image is part of the information.
+10. Conjunctions and other REL features are retained when the relation they express (addition, sequence, contrast, cause, purpose, condition…) is conveyed, whether by a word, by clause order, or by sentence structure.
+11. Do not reward or penalise style, fluency, archaism or modernity.
 
 ## Additions
 List English content that corresponds to no source word in SOURCE, classified as:
