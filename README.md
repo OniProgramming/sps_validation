@@ -15,9 +15,11 @@ Requires Python ≥ 3.10; the steps so far use only the standard library.
 # 1. Place the four input files (not in the repository):
 #    data/input/{WEB,BSB,OEB,SPS}.docx
 
-python3 -m sps_validation.sources   # fetch WLC/SBLGNT/RP/WH data at pinned commits → data/sources/
-python3 -m sps_validation.ingest    # translations → build/translations/*.jsonl
-python3 -m sps_validation.segment   # source sentence units → build/sources/{GEN,EPH}.units.jsonl
+python3 -m sps_validation.sources   # fetch WLC/SBLGNT/BHS/RP/WH data at pinned commits → data/sources/
+python3 -m sps_validation.ingest    # translations → build/translations/*.jsonl (SPS: notes removed)
+python3 -m sps_validation.segment   # source sentence units + edition differences → build/sources/
+python3 -m sps_validation.features  # information features per source word → build/features/
+python3 -m sps_validation.align     # source sentence ↔ English alignment, verse-free → build/align/
 python3 -m unittest discover -s tests
 ```
 
@@ -25,14 +27,17 @@ python3 -m unittest discover -s tests
 
 | Path | Contents |
 |---|---|
-| `sps_validation/sources.py` | pinned source datasets (MACULA Hebrew/Greek, Robinson-Pierpont, Westcott-Hort) |
+| `sps_validation/sources.py` | pinned source datasets (MACULA Hebrew/Greek, BHSA, Robinson-Pierpont, Westcott-Hort) |
 | `sps_validation/ingest.py` | .docx extraction; SPS inline apparatus parsed into typed spans |
-| `sps_validation/segment.py` | source-anchored sentence units; SBLGNT↔RP/WH variant alignment |
+| `sps_validation/segment.py` | source-anchored sentence units; WLC↔BHS and SBLGNT↔RP/WH differences |
+| `sps_validation/features.py` | information-feature inventory (LEX, ASP, STEM, VOICE, MOOD, REF, NUM, DEF, REL, NEG, ARG) |
+| `sps_validation/align.py` | verse-free monotonic sentence alignment, same algorithm for all four |
 | `config/bases.json` | which source text each translation is measured against |
 | `docs/PROTOCOL.md` | study protocol (draft) |
 
 ## Source licences
 
 - MACULA Hebrew and MACULA Greek (Clear Bible): CC BY 4.0.
+- ETCBC BHSA (BHS text): CC BY-NC 4.0.
 - WLC: public domain.
 - Robinson-Pierpont and Westcott-Hort texts: public domain.

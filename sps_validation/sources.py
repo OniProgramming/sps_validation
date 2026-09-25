@@ -35,6 +35,16 @@ SOURCES = {
         "commit": "91473892d7f36f1227e5c24f8d994d1da40311ad",
         "paths": ["parsed/EPH.UWH", "README.md"],
     },
+    # BHS text (ETCBC BHSA, Text-Fabric 2021 release): base of the WEB Old Testament (CC BY-NC 4.0)
+    "bhsa": {
+        "url": "https://github.com/ETCBC/bhsa.git",
+        "commit": "4db00e2157915495e1a4d3d57e41223df24775da",
+        "paths": [
+            f"/tf/2021/{f}.tf"
+            for f in ("otype", "oslots", "book", "chapter", "verse", "g_word_utf8", "g_cons_utf8", "trailer_utf8")
+        ]
+        + ["/README.md"],
+    },
 }
 
 

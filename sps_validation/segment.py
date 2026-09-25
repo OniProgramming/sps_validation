@@ -28,6 +28,7 @@ import json
 import re
 import sys
 import unicodedata
+from collections import Counter
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -37,11 +38,12 @@ HEB_FIELDS = [
     "ref", "unicode", "lemma", "strongnumberx", "morph", "pos", "class", "type",
     "stem", "person", "gender", "number", "state", "gloss", "english",
     "sdbh", "sensenumber", "lexdomain", "coredomain", "role", "transliteration", "after",
+    "frame", "participantref", "subjref",
 ]
 GRK_FIELDS = [
     "ref", "unicode", "lemma", "strong", "morph", "class", "type", "person", "number",
     "gender", "case", "tense", "voice", "mood", "degree", "gloss", "english",
-    "domain", "ln", "role", "after",
+    "domain", "ln", "role", "after", "frame", "subjref", "referent",
 ]
 
 
@@ -93,6 +95,57 @@ def _expand(node: ET.Element) -> list[ET.Element]:
                 out.extend(_expand(c))
             return out
     return [node]
+
+
+def parse_bhsa(tf_dir: Path, book: str = "Genesis", abbrev: str = "GEN") -> dict[str, list[dict]]:
+    """BHS words of one book from ETCBC Text-Fabric files: {'GEN 1:1': [{'text', 'ref'}]}."""
+    otype = _tf(tf_dir / "otype.tf")
+    max_slot = max(n for n, t in otype.items() if t == "word")
+    books, chapters, verses = (_tf(tf_dir / f"{f}.tf") for f in ("book", "chapter", "verse"))
+    wanted = {n for n, t in otype.items() if t == "verse" and books.get(n) == book}
+    slots = _tf(tf_dir / "oslots.tf", start=max_slot, only=wanted)
+    words = _tf(tf_dir / "g_word_utf8.tf")
+    out: dict[str, list[dict]] = {}
+    for n in sorted(wanted, key=lambda n: _slot_list(slots[n])[0]):
+        ref = f"{abbrev} {chapters[n]}:{verses[n]}"
+        out[ref] = [
+            {"ref": ref, "text": words[s]} for s in _slot_list(slots[n]) if _norm(words.get(s, ""))
+        ]
+    return out
+
+
+def _tf(path: Path, start: int = 0, only: set[int] | None = None) -> dict[int, str]:
+    """Minimal Text-Fabric .tf reader (node-feature and oslots files)."""
+    vals: dict[int, str] = {}
+    node, header = start, True
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if header:
+                header = line != ""
+                continue
+            if "\t" in line:
+                key, value = line.split("\t", 1)
+                if "-" in key:
+                    a, b = map(int, key.split("-"))
+                    if only is None:
+                        vals.update(dict.fromkeys(range(a, b + 1), value))
+                    node = b
+                    continue
+                node = int(key)
+            else:
+                node, value = node + 1, line
+            if only is None or node in only:
+                vals[node] = value
+    return vals
+
+
+def _slot_list(spec: str) -> list[int]:
+    out: list[int] = []
+    for part in spec.split(","):
+        a, _, b = part.partition("-")
+        out.extend(range(int(a), int(b or a) + 1))
+    return out
 
 
 # --------------------------------------------------------------------------- Greek
@@ -205,7 +258,7 @@ def _attach_other_editions(units: list[dict], editions: dict[str, dict[str, list
                         "ref": anchor_tok["ref"].split("!")[0],
                         "op": op,
                         "kind": _variant_kind(ours, theirs),
-                        "sblgnt": " ".join(t["text"] for t in ours),
+                        "base": " ".join(t["text"] for t in ours),
                         name.lower(): " ".join(t["text"] for t in theirs),
                     }
                 )
@@ -219,13 +272,58 @@ def _mark_transpositions(variants: list[dict], key: str) -> None:
         if d["op"] != "delete":
             continue
         for i in variants:
-            if i["op"] == "insert" and i["kind"] == "substantive" and _norm_seq(i[key]) == _norm_seq(d["sblgnt"]):
+            if i["op"] == "insert" and i["kind"] == "substantive" and _norm_seq(i[key]) == _norm_seq(d["base"]):
                 d["kind"] = i["kind"] = "transposition"
                 break
 
 
 def _norm_seq(text: str) -> list[str]:
     return [_norm(w) for w in text.split()]
+
+
+def _attach_consonantal_edition(units: list[dict], name: str, verses: dict[str, list[dict]]) -> None:
+    """Hebrew editions differ in word segmentation (suffixes, maqaf, empty article
+    slots), so they are compared letter by letter on the consonantal text, chapter
+    by chapter. Every letter-level difference is recorded on the unit it falls in."""
+    chapters: dict[str, list[tuple[str, int, dict]]] = {}
+    for ui, u in enumerate(units):
+        u.setdefault("editions", {})[name] = []
+        u.setdefault("variants", {})[name] = []
+        for tok in u["tokens"]:
+            for ch in _norm(tok["text"]):
+                chapters.setdefault(tok["ref"].split(":")[0], []).append((ch, ui, tok))
+    other: dict[str, list[tuple[str, dict]]] = {}
+    for ref, toks in verses.items():
+        for tok in toks:
+            for ch in _norm(tok["text"]):
+                other.setdefault(ref.split(":")[0], []).append((ch, tok))
+    for chapter, base in chapters.items():
+        theirs = other.get(chapter, [])
+        sm = difflib.SequenceMatcher(
+            a="".join(c for c, _, _ in base), b="".join(c for c, _ in theirs), autojunk=False
+        )
+        placed: set[int] = set()
+        for op, i1, i2, j1, j2 in sm.get_opcodes():
+            anchor = i1 if i2 > i1 else max(i1 - 1, 0)
+            _, ui, tok = base[min(anchor, len(base) - 1)]
+            for _, t in theirs[j1:j2]:
+                if id(t) not in placed:
+                    placed.add(id(t))
+                    units[ui]["editions"][name].append(t)
+            if op == "equal":
+                continue
+            words_ours = list(dict.fromkeys(id(t) for _, _, t in base[max(i1 - 1, 0) : i2 + 1]))
+            ours = {id(t): t for _, _, t in base}
+            units[ui]["variants"][name].append(
+                {
+                    "ref": tok["ref"].split("!")[0],
+                    "op": op,
+                    "kind": "consonantal",
+                    "base_letters": sm.a[i1:i2],
+                    f"{name.lower()}_letters": sm.b[j1:j2],
+                    "base_context": " ".join(ours[k]["text"] for k in words_ours),
+                }
+            )
 
 
 def _variant_kind(ours: list[dict], theirs: list[dict]) -> str:
@@ -241,10 +339,14 @@ def _variant_kind(ours: list[dict], theirs: list[dict]) -> str:
 
 
 def _norm(word: str) -> str:
+    """Compare letters only: no accents, points or cantillation; final forms folded."""
     word = unicodedata.normalize("NFD", word.lower())
     word = "".join(c for c in word if not unicodedata.combining(c))
-    word = word.replace("ς", "σ")
+    word = word.translate(FINAL_FORMS)
     return re.sub(r"[^\w]", "", word)
+
+
+FINAL_FORMS = str.maketrans("ςךםןףץ", "σכמנפצ")
 
 
 # --------------------------------------------------------------------------- shared
@@ -296,6 +398,7 @@ def main(argv: list[str]) -> None:
     out = Path(argv[2] if len(argv) > 2 else "build/sources")
     out.mkdir(parents=True, exist_ok=True)
     gen = hebrew_units(src / "macula-hebrew")
+    _attach_consonantal_edition(gen, "BHS", parse_bhsa(src / "bhsa/tf/2021"))
     eph = greek_units(
         src / "macula-greek",
         src / "byzantine-majority-text/csv-unicode/strongs/with-parsing/EPH.csv",
@@ -307,9 +410,10 @@ def main(argv: list[str]) -> None:
                 f.write(json.dumps(u, ensure_ascii=False) + "\n")
         n_tok = sum(len(u["tokens"]) for u in units)
         print(f"{name}: {len(units)} sentence units, {n_tok} source tokens")
-    for name in ("RP", "WH"):
-        n = sum(len(u["variants"][name]) for u in eph)
-        print(f"EPH: {n} word-level differences SBLGNT↔{name}")
+    for code, units, base, names in (("GEN", gen, "WLC", ("BHS",)), ("EPH", eph, "SBLGNT", ("RP", "WH"))):
+        for name in names:
+            kinds = Counter(v["kind"] for u in units for v in u["variants"][name])
+            print(f"{code}: {sum(kinds.values())} word-level differences {base}↔{name} {dict(kinds)}")
 
 
 if __name__ == "__main__":

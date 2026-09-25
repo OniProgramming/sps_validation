@@ -1,19 +1,19 @@
 {
   "_comment": "Source text each translation is measured against. A difference between a translation and this text that matches a reading in another edition (RP, WH, SBLGNT) is classified as a textual-base difference, not as a fidelity error.",
   "WEB": {
-    "Genesis": "WLC",
+    "Genesis": "BHS",
     "Ephesians": "RP",
-    "evidence": "WEB NT follows the Robinson-Pierpont Byzantine Majority Text; OT follows the Masoretic Text."
+    "evidence": "WEB NT follows the Robinson-Pierpont Byzantine Majority Text; OT is based on Biblia Hebraica Stuttgartensia (digital text: ETCBC BHSA), which differs from WLC in Genesis by 16 ketiv/qere-type letters."
   },
   "BSB": {
     "Genesis": "WLC",
     "Ephesians": "SBLGNT",
-    "evidence": "BSB OT: Westminster Leningrad Codex. BSB NT: an eclectic critical text drawing on NA, SBLGNT and ECM; SBLGNT is used as the operational base, with divergences matching RP/WH readings treated as textual-base differences."
+    "evidence": "BSB OT: Westminster Leningrad Codex. BSB NT draws on NA, SBLGNT and ECM; this study uses SBLGNT only (to be stated in the article)."
   },
   "OEB": {
     "Genesis": "WLC",
     "Ephesians": "WH",
-    "evidence": "OEB NT is a revision of the Twentieth Century New Testament conformed to Westcott-Hort; OT from the Masoretic Text."
+    "evidence": "OEB OT: Westminster digital copy of the Leningrad Codex (WLC). OEB NT: revision of the Twentieth Century New Testament conformed to Westcott-Hort."
   },
   "SPS": {
     "Genesis": "WLC",

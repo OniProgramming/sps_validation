@@ -2,7 +2,9 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from sps_validation.docx_reader import Run
-from sps_validation.ingest import _spans
+from sps_validation.ingest import _spans, strip_spans
+from sps_validation.align import skeleton
+from sps_validation.features import carries_number, hebrew_features
 from sps_validation.segment import _split_clauses, _variant_kind, _wh_text_reading
 
 
@@ -40,6 +42,39 @@ class SpsApparatusTest(unittest.TestCase):
         self.assertEqual(spans[4]["options"], ["a", "the"])
         self.assertEqual(spans[6]["form"], "nakar")
         self.assertEqual(text[spans[1]["start"] : spans[1]["end"]], "reshit")
+
+
+class NoteRemovalTest(unittest.TestCase):
+    def test_notes_are_cut_and_offsets_rebased(self):
+        text = "under my yarekh {— thigh — the oath-gesture}, and ruach."
+        spans = [
+            {"type": "translit", "start": 9, "end": 15},
+            {"type": "note", "start": 16, "end": 44},
+            {"type": "translit", "start": 50, "end": 55},
+        ]
+        out, kept = strip_spans(text, spans, {"note"})
+        self.assertEqual(out, "under my yarekh, and ruach.")
+        self.assertEqual([out[s["start"]:s["end"]] for s in kept], ["yarekh", "ruach"])
+
+
+class AlignKeysTest(unittest.TestCase):
+    def test_popular_and_academic_transliterations_share_a_skeleton(self):
+        self.assertEqual(skeleton("Yosef"), skeleton("yôsēp̄"))
+        self.assertEqual(skeleton("reshit"), skeleton("rēʾšiyṯ"))
+        self.assertEqual(skeleton("apolytrōsin"), skeleton("ἀπολύτρωσιν"))
+
+
+class FeatureTest(unittest.TestCase):
+    def test_hebrew_finite_verb(self):
+        tok = {"class": "verb", "pos": "verb", "type": "wayyiqtol", "stem": "hiphil", "person": "third",
+               "gender": "masculine", "number": "singular", "lemma": "x", "gloss": "y"}
+        classes = [c for c, _ in hebrew_features(tok)]
+        self.assertEqual(classes, ["LEX", "ASP", "STEM", "REF"])
+
+    def test_plural_of_majesty_carries_no_number(self):
+        self.assertFalse(carries_number({"lemma": "אֱלֹהִים", "gloss": "God"}))
+        self.assertTrue(carries_number({"lemma": "אֱלֹהִים", "gloss": "gods"}))
+        self.assertFalse(carries_number({"lemma": "מַיִם"}))
 
 
 class HebrewSentenceTest(unittest.TestCase):

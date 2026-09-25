@@ -1,8 +1,9 @@
 """Extract the four translations from their .docx files into JSONL records.
 
 WEB, BSB and OEB are verse-numbered ("Genesis 1:1  text").
-SPS is numbered by paragraph inside units (D1, D2, ...) whose header gives
-the verse range; its inline apparatus is kept as typed spans:
+SPS is numbered by paragraph inside units (D1, D2, ...); only the unit id is
+kept. Its inline apparatus is kept as typed spans, and `eval_text` is the
+paragraph with inline notes removed (the text that is evaluated):
 
     translit     italic run that is not an annotation (a transliterated source word)
     source_form  {…}      source form given beside an English rendering
@@ -16,15 +17,13 @@ from __future__ import annotations
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 from .docx_reader import Run, paragraph_text, read_paragraphs
 
 VERSE_RE = re.compile(r"^(Genesis|Ephesians)\s+(\d+):(\d+)\s+(.*)$")
 UNIT_RE = re.compile(r"^(BERESHIT|Ephesians)\s*·\s*D(\d+)$")
-RANGE_RE = re.compile(
-    r"\b(Gen(?:esis)?|Ephesians)\s+(\d+)[.:](\d+)\s*[–-]\s*(?:(\d+)[.:])?(\d+)\b"
-)
 PARA_NO_RE = re.compile(r"^\d+$")
 SEPARATOR_RE = re.compile(r"^(·\s*)+$")
 
@@ -53,30 +52,73 @@ def parse_verse_file(path: str, code: str) -> list[dict]:
     return records
 
 
-def parse_sps(path: str) -> list[dict]:
-    paragraphs = read_paragraphs(path)
+def english_vocabulary(translation_dir: Path) -> set[str]:
+    """Word forms used by WEB, BSB and OEB — used only to tell an English gloss
+    inside SPS braces from a transliterated source form."""
+    vocab: set[str] = set()
+    for code in ("WEB", "BSB", "OEB"):
+        with (translation_dir / f"{code}.jsonl").open(encoding="utf-8") as f:
+            for line in f:
+                vocab.update(w.lower() for w in re.findall(r"[A-Za-z]+", json.loads(line)["text"]))
+    return vocab
+
+
+def hebrew_forms(source_dir: Path) -> set[str]:
+    """ASCII-folded transliterations of every Genesis word (MACULA Hebrew)."""
+    import glob
+    import xml.etree.ElementTree as ET
+
+    forms: set[str] = set()
+    for path in glob.glob(str(source_dir / "macula-hebrew/WLC/lowfat/01-Gen-*-lowfat.xml")):
+        for w in ET.parse(path).getroot().iter("w"):
+            if w.get("transliteration"):
+                forms.add(fold(w.get("transliteration")))
+    return forms
+
+
+def fold(word: str) -> str:
+    word = unicodedata.normalize("NFD", word.lower())
+    return re.sub(r"[^a-z]", "", word)
+
+
+def parse_sps(
+    path: str, english: set[str] | None = None, hebrew: set[str] | None = None
+) -> tuple[list[dict], list[str]]:
+    """SPS paragraphs in reading order, tagged only with their unit (D1, D2, …).
+
+    Unit headers (titles, subtitles, verse ranges) are ignored. An exact repeat
+    of an earlier paragraph is skipped and reported.
+    """
     records: list[dict] = []
+    warnings: list[str] = []
+    seen: dict[str, str] = {}
     unit = None
-    header_lines: list[str] = []
     current: dict | None = None
     in_text = False
 
     def close():
         nonlocal current
         if current is not None:
-            current["text"], current["spans"] = _spans(current.pop("_runs"))
-            records.append(current)
+            text, spans = _spans(current.pop("_runs"))
+            key = f"{current['book']}:{text}"
+            where = f"{current['book']} para {current['para']}"
+            if key in seen:
+                warnings.append(f"{where} repeats {seen[key]} word for word; skipped")
+            else:
+                seen[key] = where
+                current["text"], current["spans"] = text, spans
+                current["eval_text"], current["eval_spans"] = strip_spans(text, spans, {"note"})
+                records.append(current)
             current = None
 
-    for runs in paragraphs:
+    for runs in read_paragraphs(path):
         line = paragraph_text(runs)
         m = UNIT_RE.match(line)
         if m:
             close()
             in_text = True
             book = "Genesis" if m.group(1) == "BERESHIT" else "Ephesians"
-            unit = {"book": book, "unit": f"{book[:3].upper()}-D{int(m.group(2))}", "range": None}
-            header_lines = []
+            unit = {"book": book, "unit": f"{book[:3].upper()}-D{int(m.group(2))}"}
             continue
         if not in_text:
             continue
@@ -89,58 +131,84 @@ def parse_sps(path: str) -> list[dict]:
             continue
         if PARA_NO_RE.match(line):
             close()
-            if unit["range"] is None:
-                unit["range"] = _parse_range(" ".join(header_lines), unit["book"])
-                unit["header"] = header_lines[:]
-            current = {
-                "translation": "SPS",
-                "book": unit["book"],
-                "unit": unit["unit"],
-                "unit_range": unit["range"],
-                "unit_header": unit["header"],
-                "para": int(line),
-                "_runs": [],
-            }
+            current = {"translation": "SPS", **unit, "para": int(line), "_runs": []}
             continue
-        if current is None:
-            header_lines.append(line)
-        else:
+        if current is not None:
             if current["_runs"]:
                 current["_runs"].append(Run(" ", False, False))
             current["_runs"].extend(runs)
+        # lines between a unit header and its first paragraph are titles: ignored
     close()
-    return records
+    if english:
+        _mark_glosses(records, english, hebrew or set())
+    return records, warnings
 
 
-def add_effective_ranges(sps: list[dict], verses: list[tuple[str, int, int]]) -> list[str]:
-    """Units run from their declared start to the verse before the next unit's start.
+def _mark_glosses(records: list[dict], english: set[str], hebrew: set[str]) -> None:
+    """`{— compassion / mercy}` is an English gloss (a note), `{— himmol}` a source form.
 
-    The declared end in a unit header is kept for reference; where it disagrees
-    with the effective end a warning is returned.
+    A dash-introduced brace without *…* source text is a gloss when its words
+    are English word forms (as used by WEB/BSB/OEB): a single word must also not
+    be a Hebrew word of Genesis ({— met} is Hebrew מֵת); a phrase needs at least
+    two thirds English words or SPS names. Hyphenated words are checked part by part.
     """
-    index = {v: i for i, v in enumerate(verses)}
-    units: dict[str, dict] = {}
-    for r in sps:
-        units.setdefault(r["unit"], r["unit_range"] | {"unit": r["unit"]})
-    ordered = list(units.values())
-    warnings = []
-    effective = {}
-    for i, u in enumerate(ordered):
-        start = (u["book"], *u["start"])
-        nxt = ordered[i + 1] if i + 1 < len(ordered) else None
-        if nxt and nxt["book"] == u["book"]:
-            end = verses[index[(nxt["book"], *nxt["start"])] - 1]
-        else:
-            end = max((v for v in verses if v[0] == u["book"]), key=lambda v: index[v])
-        effective[u["unit"]] = {"book": u["book"], "start": list(start[1:]), "end": list(end[1:])}
-        if list(end[1:]) != u["end"]:
-            warnings.append(
-                f"{u['unit']}: header declares {u['start']}–{u['end']}, "
-                f"but the next unit implies it ends at {list(end[1:])}"
-            )
-    for r in sps:
-        r["effective_range"] = effective[r["unit"]]
-    return warnings
+    translit = {
+        w.lower()
+        for r in records
+        for s in r["spans"]
+        if s["type"] == "translit"
+        for w in re.findall(r"[\wʿʾ’-]+", s["text"])
+    }
+    for r in records:
+        changed = False
+        for s in r["spans"]:
+            if s["type"] != "source_form" or "*" in s["text"]:
+                continue
+            if s["text"][1:].lstrip()[:1] not in "—–":
+                continue
+            words = [w.lower() for w in re.findall(r"[^\s/—–{}…\-]+", s["text"])]
+            eng = [w in english and w not in translit for w in words]
+            known = [e or w in translit for e, w in zip(eng, words)]
+            if len(words) == 1:
+                gloss = eng[0] and fold(words[0]) not in hebrew
+            else:
+                gloss = any(eng) and sum(known) >= 2 * len(words) / 3
+            if gloss:
+                s["type"] = "note"
+                s["note"] = s.pop("form")
+                changed = True
+        if changed:
+            r["eval_text"], r["eval_spans"] = strip_spans(r["text"], r["spans"], {"note"})
+
+
+def strip_spans(text: str, spans: list[dict], kinds: set[str]) -> tuple[str, list[dict]]:
+    """Remove spans of the given kinds from the text, re-basing the remaining spans."""
+    cuts = sorted((s["start"], s["end"]) for s in spans if s["type"] in kinds)
+    out, kept, pos, shift = [], [], 0, []
+    for a, b in cuts:
+        out.append(text[pos:a])
+        shift.append((b, b - a))
+        pos = b
+    out.append(text[pos:])
+
+    def moved(i: int) -> int:
+        return i - sum(n for end, n in shift if end <= i)
+
+    for s in spans:
+        if s["type"] not in kinds:
+            kept.append(s | {"start": moved(s["start"]), "end": moved(s["end"])})
+    joined = "".join(out)
+    # collapse the whitespace the cut leaves behind, keeping offsets consistent
+    result, mapping = [], []
+    for i, ch in enumerate(joined):
+        if ch == " " and (not result or result[-1] == " " or (i + 1 < len(joined) and joined[i + 1] in ",.;:!?")):
+            mapping.append(len(result))
+            continue
+        mapping.append(len(result))
+        result.append(ch)
+    mapping.append(len(result))
+    kept = [s | {"start": mapping[s["start"]], "end": mapping[s["end"]]} for s in kept]
+    return "".join(result).strip(), kept
 
 
 def _classify_braces(span: dict) -> None:
@@ -158,16 +226,6 @@ def _classify_braces(span: dict) -> None:
         span["note"] = plain
     else:
         span["form"] = plain
-
-
-def _parse_range(text: str, book: str):
-    m = RANGE_RE.search(text)
-    if not m:
-        return None
-    _, c1, v1, c2, v2 = m.groups()
-    c1, v1, v2 = int(c1), int(v1), int(v2)
-    c2 = int(c2) if c2 else c1
-    return {"book": book, "start": [c1, v1], "end": [c2, v2]}
 
 
 def _spans(runs: list[Run]) -> tuple[str, list[dict]]:
@@ -228,21 +286,21 @@ def main(argv: list[str]) -> None:
     input_dir = Path(argv[1] if len(argv) > 1 else "data/input")
     out_dir = Path(argv[2] if len(argv) > 2 else "build/translations")
     out_dir.mkdir(parents=True, exist_ok=True)
-    verses: list[tuple[str, int, int]] = []
     for code in ("WEB", "BSB", "OEB"):
         recs = parse_verse_file(str(input_dir / f"{code}.docx"), code)
         _write(out_dir / f"{code}.jsonl", recs)
         print(f"{code}: {len(recs)} verses")
-        verses = verses or [(r["book"], r["chapter"], r["verse"]) for r in recs]
-    sps = parse_sps(str(input_dir / "SPS.docx"))
-    for warning in add_effective_ranges(sps, verses):
+    sps, warnings = parse_sps(
+        str(input_dir / "SPS.docx"), english_vocabulary(out_dir), hebrew_forms(Path("data/sources"))
+    )
+    for warning in warnings:
         print("WARNING:", warning)
     _write(out_dir / "SPS.jsonl", sps)
     kinds: dict[str, int] = {}
     for r in sps:
         for s in r["spans"]:
             kinds[s["type"]] = kinds.get(s["type"], 0) + 1
-    print(f"SPS: {len(sps)} paragraphs, apparatus spans {kinds}")
+    print(f"SPS: {len(sps)} paragraphs, apparatus spans {kinds} (notes are removed from eval_text)")
 
 
 def _write(path: Path, records: list[dict]) -> None:

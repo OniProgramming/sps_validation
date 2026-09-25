@@ -1,8 +1,11 @@
-# Source-fidelity evaluation of four English translations — protocol (draft v0.1)
+# Source-fidelity evaluation of four English translations — protocol (draft v0.2)
 
-Status: **draft for the author's review**. Once the open decisions (§10) are settled, this
-document is frozen, time-stamped (e.g. OSF pre-registration) and only then is the full
-evaluation run. Any later change is logged in §11 with its reason.
+Status: **draft**. The author's decisions of v0.1 have been applied (§11). The remaining open
+points are in §10. The protocol is then frozen and time-stamped (e.g. OSF pre-registration),
+and only after that is the full evaluation run.
+
+The validator is **fully computational**: no human rating enters any score. Its validity is
+established computationally (§8).
 
 ## 1. Research question
 
@@ -18,197 +21,247 @@ loses. Word order and part-of-speech correspondence are therefore **not** part o
 
 | Translation | Edition (as supplied) | Genesis base | Ephesians base |
 |---|---|---|---|
-| WEB | Protestant ed., 26 Aug 2026 | WLC | Robinson-Pierpont (Byzantine) |
-| BSB | 3rd printing | WLC | SBLGNT (operational proxy for its eclectic critical text) |
-| OEB | Release 2025.6, US | WLC | Westcott-Hort |
+| WEB | Protestant ed., 26 Aug 2026 | BHS (Leningrad Codex) | Robinson-Pierpont (Byzantine) |
+| BSB | 3rd printing | WLC | SBLGNT* |
+| OEB | Release 2025.6, US | WLC (Westminster digital Leningrad Codex) | Westcott-Hort |
 | SPS | author's manuscript | WLC | SBLGNT |
 
-Scope: Genesis 1–50 (1,533 verses) and Ephesians 1–6 (155 verses).
+\* BSB's New Testament draws on several critical editions (NA, SBLGNT, ECM). This study uses
+SBLGNT only, and the article must say so. NA and ECM are not openly licensed.
 
-Source data (all openly licensed, pinned to commit hashes in `sps_validation/sources.py`):
+Scope: Genesis 1–50 and Ephesians 1–6.
 
-- **MACULA Hebrew** (WLC text, OSHB morphology, Groves/Clear syntax trees, SDBH word senses and
-  semantic domains, semantic-role frames). CC BY 4.0.
-- **MACULA Greek — SBLGNT** (text, morphology, syntax trees, Louw–Nida domains). CC BY 4.0.
+Source data (openly licensed, pinned to commit hashes in `sps_validation/sources.py`):
+
+- **MACULA Hebrew**: WLC text, OSHB morphology, Groves/Clear syntax trees, SDBH word senses
+  and semantic domains, semantic-role frames. CC BY 4.0.
+- **MACULA Greek (SBLGNT)**: text, morphology, syntax trees, Louw–Nida domains. CC BY 4.0.
+- **ETCBC BHSA**: digital BHS, used for WEB's Genesis base. CC BY-NC 4.0.
 - **Robinson-Pierpont** Byzantine Textform with parsing. Public domain.
 - **Westcott-Hort** with Robinson's parsing. Public domain.
 
-Textual-base rule: every translation is measured against its own base (table above).
-Differences between editions are computed mechanically (`segment.py`: 105 SBLGNT↔RP and
-12 SBLGNT↔WH word-level differences in Ephesians, classified as substantive,
-transposition, orthographic or word-division). Where a translation departs from its own base
-but agrees with a reading of another edition, the item is logged as a *textual-base
-difference* and excluded from the fidelity score.
+**Textual-base rule.** Every translation is measured against its own base. Differences between
+editions are computed mechanically (`segment.py`):
+
+| Comparison | Differences | Classification |
+|---|---|---|
+| WLC ↔ BHS, Genesis | 16 letters | all ketiv/qere-type consonant differences (ו/י, ו/ה); no word differs |
+| SBLGNT ↔ RP, Ephesians | 105 words | 78 substantive, 16 transpositions, 8 orthographic, 3 word-division |
+| SBLGNT ↔ WH, Ephesians | 12 words | 11 substantive, 1 orthographic |
+
+The rich annotation (MACULA) exists only for WLC and SBLGNT, so all features are generated
+from those. For a translation with another base, every unit containing an edition difference
+carries that edition's wording. A feature affected by the difference is scored against the
+translation's own base; where the base lacks the word, the feature is marked
+*textual-base* and excluded.
 
 ## 3. Unit of analysis: the source sentence
 
-Units are defined **on the source side only**, so all four translations are scored on
-exactly the same units regardless of how each one punctuates English.
+Units are defined **on the source side only**, so all four translations are scored on exactly
+the same units. **Verse numbers play no part in the evaluation.**
 
-- **Hebrew.** MACULA stores one syntax tree per verse. Where the verse root is a coordination
-  of independent clauses, each clause is a sentence; a clause-initial conjunction belongs to
-  the clause it opens; non-clausal material attaches to the preceding sentence.
-  Result: **4,220 sentences, 32,365 source tokens** (tokens include prefixed particles).
-  Note: quoted direct speech forms its own sentence(s), separate from the quotation formula
-  ("And God said" | "Let there be light" | "and there was light").
-- **Greek.** MACULA sentences, which follow the SBLGNT editors' sentence punctuation (period,
-  question mark, raised dot). Result: **78 sentences, 2,416 source tokens.** Long periods
-  such as Eph 1:3–6 remain one unit.
+- **Hebrew.** MACULA's syntax trees are split into independent clauses. A clause-initial
+  conjunction belongs to the clause it opens, and non-clausal material attaches to the
+  preceding sentence. Result: **4,220 sentences, 32,365 source tokens.** Quoted direct speech
+  forms its own sentence(s), separate from the quotation formula.
+- **Greek.** MACULA sentences, following the SBLGNT editors' punctuation (period, question
+  mark, raised dot). Result: **78 sentences, 2,416 source tokens.**
 
-The English span for each unit is located by sentence alignment (§6). For SPS, which is
-paragraph-numbered, the search is limited to the paragraphs of the unit (D1…D12, D1…D5)
-covering the verse.
+## 4. Sentence alignment (`align.py`)
 
-## 4. What counts as information: the feature inventory
+Each translation is read as one continuous text per book. For SPS the unit markers (D1…) and
+paragraph numbers are ignored, and inline notes are removed (§7). The same algorithm is used
+for all four:
+
+1. The English is cut into pieces at . ; : ? ! and at a comma before an opening quote or a
+   coordinating conjunction.
+2. Each source sentence gets a bag of keys: the stemmed English glosses of its words (MACULA)
+   plus a consonant skeleton of each word's transliteration. The skeleton lets SPS
+   transliterations such as *Yosef* or *reshit* match the source. Each English piece gets its
+   stemmed content words and the skeletons of names and transliterations.
+3. Dynamic programming finds the order-preserving segmentation that maximises IDF-weighted key
+   overlap, with a length prior. It allows one sentence to take 1–8 pieces, 2–4 sentences to
+   share a piece, 2:2 groupings, and 1:0 / 0:1 (omission / addition).
+
+**Aligner accuracy.** WEB, BSB and OEB carry verse numbers in their files. These are used
+*after* alignment, only to check it:
+
+| | source sentence placed in its verse | English piece placed in its verse |
+|---|---|---|
+| WEB Genesis | 97.3% | 97.0% |
+| BSB Genesis | 95.7% | 96.1% |
+| OEB Genesis | 95.7% | 96.6% |
+| WEB / BSB / OEB Ephesians | 100% | 98.2% / 98.7% / 93.5% |
+
+These figures are lower bounds, because translations legitimately move material across verse
+boundaries. SPS has no verse numbers, so for SPS the report gives the distribution of alignment
+scores instead:
+
+| median alignment score | WEB | BSB | OEB | SPS |
+|---|---|---|---|---|
+| Genesis | 0.61 | 0.55 | 0.54 | 0.48 |
+| Ephesians | 0.53 | 0.53 | 0.34 | 0.48 |
+
+The alignment score measures word overlap with the MACULA English glosses, so it is higher
+for wording that stays close to those glosses. It is used **only** to locate text and is not a
+fidelity measure.
+
+**Robustness to alignment errors.**
+- When several source sentences share one English piece (n:1), they are judged together
+  against that piece. Scores stay per source sentence, because every feature belongs to one
+  source word.
+- The judge also sees the English immediately before and after. Information found there is
+  scored as retained (marked *displaced*). A boundary error between neighbours therefore
+  produces neither a false "lost" nor a false "addition".
+
+## 5. What counts as information: the feature inventory (`features.py`)
 
 Each source token carries a set of **information features**. The inventory is generated
-mechanically from the source annotation *before* any translation is seen, so the judge
-cannot decide what counts.
+mechanically from the source annotation before any translation is seen, and each feature
+counts once.
 
-| Class | Feature | Hebrew source | Greek source |
+| Class | Meaning | Hebrew | Greek |
 |---|---|---|---|
-| LEX | lexical sense / semantic field | SDBH sense + lexical domain | Louw–Nida domain |
-| VERB | aspect/tense | qatal, yiqtol, wayyiqtol, participle, … | tense-form |
-| VERB | voice / stem meaning | stem (niphal, piel, hiphil …) | voice |
-| VERB | mood / modality | imperative, jussive, cohortative | mood |
-| REF | person, number (verbs, pronouns); gender where it identifies a referent | morph | morph |
-| NOM | number; definiteness | morph, article | morph, article |
-| REL | relation expressed by the word or form | construct state, prepositions, conjunctions, particles, negation | case function, prepositions, conjunctions, particles, negation |
-| ARG | who-does-what-to-whom | semantic-role frame (A0/A1…) | syntactic role |
+| LEX | lexical sense / semantic field | lemma + SDBH domain | lemma + Louw–Nida domain |
+| ASP | aspect / tense-form | qatal, yiqtol, wayyiqtol, … | tense |
+| STEM | derived-stem meaning | niphal, piel, hiphil, … (qal unmarked) | — |
+| VOICE | middle / passive | — | voice ≠ active |
+| MOOD | non-indicative mood | — | imperative, subjunctive, participle, infinitive … |
+| REF | who is meant: person/gender/number | finite verbs, participles, pronouns, suffixes | finite verbs, pronouns |
+| NUM | number of a common noun | ✓ | ✓ |
+| DEF | definiteness | article | article |
+| REL | relation | prepositions, conjunctions, relative, construct state, directional he, particles | prepositions, conjunctions, particles, genitive/dative case |
+| NEG | negation | ✓ | ✓ |
+| ARG | who does what to whom | semantic-role frames (A0, A1, …) | semantic-role frames |
 
-Features that carry no information in context are excluded by fixed rules, not by the judge.
-Example: the grammatical gender of an inanimate noun.
+These carry no feature of their own:
+- grammatical agreement;
+- the object marker אֵת, which is represented by ARG;
+- paragogic nun;
+- the number of plurals without count meaning (שָׁמַיִם, מַיִם, פָּנִים, חַיִּים, …, and
+  אֱלֹהִים when it denotes God; GKC §124).
 
-## 5. Scoring each feature
+| | features | LEX | REL | REF | NUM | ASP | ARG | DEF | STEM | VOICE | MOOD | NEG |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Genesis | 56,250 | 15,870 | 13,280 | 8,321 | 6,223 | 5,059 | 4,222 | 1,807 | 1,179 | — | — | 289 |
+| Ephesians | 4,644 | 1,213 | 1,067 | 404 | 551 | 327 | 302 | 431 | — | 110 | 206 | 33 |
 
-For every feature of every source token, the judge assigns one outcome from the English text:
+## 6. Scoring each feature and the measures
+
+For every feature, the judge assigns one outcome from the aligned English:
 
 | Outcome | Meaning | Score |
 |---|---|---|
 | retained | the information is recoverable from the English | 1 |
 | partial | recoverable but narrowed, broadened or weakened | 0.5 |
 | lost | not recoverable | 0 |
-| distorted | the English conveys different information (wrong sense, time, agent, relation …) | 0, also counted as an error |
+| distorted | the English conveys different information | 0, also counted as an error |
 | transliterated | the source word is reproduced, not translated | see §7 |
 
 Every outcome records the English words that render the token (the word alignment) and a
-one-line justification, so each judgement can be checked.
+one-line justification, so it can be audited.
 
 **Additions.** English material not grounded in any source token is classified as
-(a) required by English grammar (articles, auxiliaries, copula), which is neutral;
-(b) explicitation of information implicit in the source, such as a pronoun's referent,
-which is neutral but counted; or (c) unsupported addition, which is counted as an error.
+(a) required by English grammar, which is neutral; (b) explicitation of implicit source
+information, which is neutral but counted; or (c) unsupported addition, which is an error.
 
-## 6. Measures
+**Measures** for sentence *s* and translation *T*:
+- **Retention** R = Σ scores / number of scorable features. **Loss** = 1 − R.
+- **Accuracy** P = supported / (supported + distorted + unsupported additions).
+- **Fidelity** F = 2PR / (P + R).
+- **Sub-scores** by feature class.
 
-For sentence *s* and translation *T*:
+Output: one row per sentence per translation, then totals per book and per translation
+(token-weighted). The statistics are:
+- 95% bootstrap intervals, resampling sentences;
+- the Friedman test across the four translations, then pairwise Wilcoxon signed-rank tests with
+  Holm correction;
+- effect sizes.
 
-- **Retention** R = Σ scores / number of scorable features (the share of source
-  information recovered). **Loss** = 1 − R.
-- **Accuracy** P = supported information / (supported + distorted + unsupported additions).
-- **Fidelity index** F = 2PR / (P + R).
-- **Sub-scores by feature class** (LEX, VERB, REF, NOM, REL, ARG). These are the reported
-  answers to "semantic field", "lexical" and "grammatical" fidelity.
+Descriptive, **not part of the score**: lexical concordance, SPS `*` marks, and textual-base
+differences.
 
-Aggregation: per sentence, then per book and per translation (token-weighted, so a
-two-word sentence does not count as much as a forty-word one). Uncertainty: 95% bootstrap
-intervals, resampling sentences. Comparison: all four translations are scored on the same
-sentences (a repeated-measures design), so the tests are the Friedman test, then pairwise
-Wilcoxon signed-rank tests with Holm correction. Effect sizes are reported alongside
-*p*-values.
+## 7. SPS text and transliteration
 
-Descriptive, **not part of the score**:
-- lexical concordance, i.e. how consistently each source lemma is rendered;
-- SPS disclosed-loss marks (`*`);
-- textual-base differences.
+**Evaluated SPS text:** the running text *without notes*. Removed:
+- 32 inline commentary notes, e.g. `{— *va-yakkirem* — the *nakar* root: he knows them}`;
+- 9 English glosses in braces, e.g. `{— compassion / mercy}`.
 
-## 7. SPS apparatus and transliteration
-
-SPS carries an inline apparatus. `ingest.py` parses it deterministically from the .docx
-formatting:
-
-| Mark | Detected from | Count |
-|---|---|---|
-| transliteration | italic run | 1,430 |
-| `{…}` bare source form | braces | 255 |
-| `{— … — …}` inline explanatory note | braces with commentary | 32 |
-| `[[a\|b]]` open ambiguity | double brackets | 2 |
-| `word*` disclosed loss | asterisk outside braces | 22 (21 of them in Gen 1–4) |
-
-The other three inputs were supplied **with notes and footnotes removed**. Treating SPS's
-inline apparatus as text while the others lose their notes would not be symmetric. The
-protocol therefore scores two pre-registered conditions:
-
-1. **Text-only (primary).** Apparatus stripped from SPS (`{…}` removed, `[[a|b]]` → first
-   option, `*` removed). Transliterations remain, because they are the running text.
-2. **Text + apparatus.** SPS with its inline apparatus, and WEB/BSB/OEB with their published
-   footnotes restored.
+These are detected mechanically (`ingest._mark_glosses`). Kept as part of the text:
+- transliterations (1,420);
+- bare source forms in braces (245);
+- `[[a|b]]` alternatives (2);
+- `*` marks (22).
 
 Transliterations are scored under three pre-registered rules, and all three are reported:
 
 - **T0 (receiver-oriented).** LEX = lost unless the sentence context makes the meaning
-  recoverable. Grammatical features visible in the transliterated form (for example Greek
-  case endings) are judged normally.
+  recoverable. Grammatical features visible in the form (e.g. Greek case endings) are judged
+  normally.
 - **T½.** LEX = partial.
-- **T1 (source-oriented).** LEX = retained, since the lexeme's identity is preserved.
+- **T1 (source-oriented).** LEX = retained, because the lexeme's identity is preserved.
 
-Proper names are exempt: every translation transliterates them.
+Proper names are exempt, since every translation transliterates them. If the ranking of the
+translations changes between T0 and T1, that dependence is itself a finding.
 
-If the ranking of translations changes between T0 and T1, that dependence is itself a
-reported finding.
+## 8. Neutrality and computational validation (no human raters)
 
-## 8. Neutrality safeguards
-
-1. The protocol, feature inventory and prompts are frozen before any full run.
+**Neutrality**
+1. The protocol, feature inventory and prompts are frozen before the full run.
 2. Translation names are removed and the order is randomised per sentence. SPS cannot be
    fully blinded, because its transliterations identify it; this is stated as a limitation.
-3. Identical prompts, rules and features are used for all four translations.
-4. Two independent judges from different model families score everything, and their
-   agreement is reported.
-5. **Human validation.** A stratified random sample (≈5% of sentences, all four translations)
-   is scored independently by at least two Hebraists/Hellenists who do not know which
-   translation is which. Krippendorff's α is reported for human–human and human–model
-   agreement.
-6. All per-sentence, per-feature judgements, the code and the pinned sources are published
-   (with a Zenodo DOI) so that any reader can re-run or audit the result.
-7. Conflict of interest: the author of this study is the translator of SPS. This is declared,
-   and items 1–6 are the answer to it.
+3. Identical inputs, rules and features are used for every translation.
+
+**Validity without human raters**
+4. **Two independent judges** from different model families score everything. Their agreement
+   is reported per feature class (Krippendorff's α). Disagreements are scored as the mean,
+   and the main results are also reported for each judge separately.
+5. **Test–retest.** A random 10% of units is judged a second time. Stability is reported
+   as α.
+6. **Known-answer (perturbation) tests.** Controlled errors are injected automatically into
+   the English of all four translations, in equal numbers per translation: word deletion, number
+   flip, tense change, negation removal, agent/patient swap, wrong-sense substitution, and
+   unsupported addition. Reported: the rate at which the validator detects each error type
+   (sensitivity), and its false alarms on unperturbed text (specificity). This gives a
+   measured error rate for the instrument, and shows it is equally sensitive for every
+   translation.
+7. **Rule-based cross-checks.** Where a feature can be tested mechanically on the aligned
+   English, a deterministic check is run and its agreement with the judges reported (NEG:
+   negator present; NUM: noun plurality; DEF: article/determiner).
+8. **Openness.** All per-sentence, per-feature judgements, the code and the pinned sources are
+   published with a DOI.
+9. **Conflict of interest.** The study's author is the translator of SPS. This is declared,
+   and items 1–8 are the answer to it.
 
 ## 9. Pipeline
 
 | Step | Module | Status |
 |---|---|---|
 | Fetch pinned sources | `sources.py` | done |
-| Extract translations + SPS apparatus | `ingest.py` | done |
-| Source sentence units + edition variants | `segment.py` | done |
-| Feature inventory per source token | `features.py` | next |
-| Sentence alignment (source unit → English span) | `align.py` | next |
-| Judging (features, additions, word alignment) | `judge.py` | needs an LLM API key |
-| Aggregation, statistics, report | `report.py` | — |
+| Extract translations; SPS apparatus; notes removed | `ingest.py` | done |
+| Source sentences; edition differences (BHS, RP, WH) | `segment.py` | done |
+| Sentence alignment (verse-free) | `align.py` | done |
+| Feature inventory | `features.py` | done |
+| Judging (features, additions, word alignment) | `judge.py` | needs LLM API keys |
+| Perturbation tests, cross-checks | `validate.py` | next |
+| Aggregation, statistics, per-sentence + total report | `report.py` | — |
 
-## 10. Open decisions (for the author)
+## 10. Open points
 
-1. Transliteration: which rule (T0 / T½ / T1) is the *primary* analysis, with the other two
-   as sensitivity analyses? Or all three reported with equal standing?
-2. Condition 2 (text + apparatus) requires the published footnotes of WEB/BSB/OEB. Include
-   it, or report text-only only?
-3. BSB Ephesians base: SBLGNT as proxy, or another edition?
-4. OEB/WEB Genesis base: WLC assumed (both follow the Masoretic Text). Confirm.
-5. Human raters: who, and how many?
-6. Judges: which model families.
+1. Transliteration: is one of T0 / T½ / T1 the *primary* analysis, or do all three have equal
+   standing?
+2. Bare source forms `{…}` in SPS are kept as running text (§7). Confirm, or remove them too.
+3. Judges: which two model families.
 
-## 11. Data issues found in the supplied files
+## 11. Decision log
 
-- **SPS Ephesians paragraphs 15 and 16 are identical** (Eph 4:17–24 appears twice). Nothing
-  appears to be missing, but the duplicate must be removed or explained before the
-  evaluation.
-- **SPS unit GEN-D7** declares "Gen 11:27 – 12:20" in its header, but its 82 paragraphs run
-  until GEN-D8 begins at 25:12, i.e. 11:27–25:11. Effective ranges are inferred from the
-  next unit's start (`ingest.add_effective_ranges`).
-- **SPS apparatus conventions change during Genesis.** Loss marks (`*`) are used almost only in
-  Gen 1–4. From about Gen 12 onward, braces sometimes hold explanatory notes (e.g.
-  `{— *roʾsh ha-miṭṭah* — or, upon the top of his staff (LXX); …}`) rather than bare source forms,
-  and inside these notes `*…*` is italic markup. The parser separates the two kinds, but the
-  author should decide whether inline notes belong to Book I (the text) at all.
-- The text in the SPS preface also contains an italic example sentence. Extraction therefore
-  starts at the first unit header.
+- v0.2:
+  - SPS evaluated without notes.
+  - SPS unit headers ignored; only unit ids kept.
+  - Verses not used in the evaluation (only to measure aligner accuracy).
+  - BSB Ephesians measured against SBLGNT, to be stated in the article.
+  - WEB Genesis measured against BHS; its difference from WLC is 16 ketiv/qere letters.
+  - OEB and BSB Genesis confirmed as WLC.
+  - No human raters; validation is computational (§8).
+- Data: SPS Ephesians paragraph 16 duplicated paragraph 15 (Eph 4:17–24). The pipeline skips
+  exact repeats with a warning; the author will remove it from the manuscript.
