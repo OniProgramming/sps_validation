@@ -2,8 +2,8 @@
 
 WEB, BSB and OEB are verse-numbered ("Genesis 1:1  text").
 SPS is numbered by paragraph inside units (D1, D2, ...); only the unit id is
-kept. Its inline apparatus is kept as typed spans, and `eval_text` is the
-paragraph with inline notes removed (the text that is evaluated):
+kept. Its inline apparatus is kept as typed spans, and `eval_text` (the text
+that is evaluated) keeps only transliterations and [[…]] ambiguity markers:
 
     translit     italic run that is not an annotation (a transliterated source word)
     source_form  {…}      source form given beside an English rendering
@@ -24,6 +24,10 @@ from .docx_reader import Run, paragraph_text, read_paragraphs
 
 VERSE_RE = re.compile(r"^(Genesis|Ephesians)\s+(\d+):(\d+)\s+(.*)$")
 UNIT_RE = re.compile(r"^(BERESHIT|Ephesians)\s*·\s*D(\d+)$")
+# The evaluated SPS text keeps transliterations and [[a|b]] ambiguity markers;
+# everything in braces ({source form}, {note}, {gloss}) and the * marks are removed.
+REMOVED_FROM_EVAL = {"source_form", "note", "loss_mark"}
+
 PARA_NO_RE = re.compile(r"^\d+$")
 SEPARATOR_RE = re.compile(r"^(·\s*)+$")
 
@@ -107,7 +111,7 @@ def parse_sps(
             else:
                 seen[key] = where
                 current["text"], current["spans"] = text, spans
-                current["eval_text"], current["eval_spans"] = strip_spans(text, spans, {"note"})
+                current["eval_text"], current["eval_spans"] = strip_spans(text, spans, REMOVED_FROM_EVAL)
                 records.append(current)
             current = None
 
@@ -178,7 +182,7 @@ def _mark_glosses(records: list[dict], english: set[str], hebrew: set[str]) -> N
                 s["note"] = s.pop("form")
                 changed = True
         if changed:
-            r["eval_text"], r["eval_spans"] = strip_spans(r["text"], r["spans"], {"note"})
+            r["eval_text"], r["eval_spans"] = strip_spans(r["text"], r["spans"], REMOVED_FROM_EVAL)
 
 
 def strip_spans(text: str, spans: list[dict], kinds: set[str]) -> tuple[str, list[dict]]:
@@ -300,7 +304,7 @@ def main(argv: list[str]) -> None:
     for r in sps:
         for s in r["spans"]:
             kinds[s["type"]] = kinds.get(s["type"], 0) + 1
-    print(f"SPS: {len(sps)} paragraphs, apparatus spans {kinds} (notes are removed from eval_text)")
+    print(f"SPS: {len(sps)} paragraphs, apparatus spans {kinds} (eval_text keeps transliterations and [[…]] only)")
 
 
 def _write(path: Path, records: list[dict]) -> None:

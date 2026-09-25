@@ -1,7 +1,6 @@
-# Source-fidelity evaluation of four English translations — protocol (draft v0.2)
+# Source-fidelity evaluation of four English translations — protocol (draft v0.3)
 
-Status: **draft**. The author's decisions of v0.1 have been applied (§11). The remaining open
-points are in §10. The protocol is then frozen and time-stamped (e.g. OSF pre-registration),
+Status: **draft**. The author's decisions have been applied (§11). The protocol is then frozen and time-stamped (e.g. OSF pre-registration),
 and only after that is the full evaluation run.
 
 The validator is **fully computational**: no human rating enters any score. Its validity is
@@ -70,7 +69,7 @@ the same units. **Verse numbers play no part in the evaluation.**
 ## 4. Sentence alignment (`align.py`)
 
 Each translation is read as one continuous text per book. For SPS the unit markers (D1…) and
-paragraph numbers are ignored, and inline notes are removed (§7). The same algorithm is used
+paragraph numbers are ignored, and brace content and `*` marks are removed (§7). The same algorithm is used
 for all four:
 
 1. The English is cut into pieces at . ; : ? ! and at a comma before an opening quote or a
@@ -156,7 +155,7 @@ For every feature, the judge assigns one outcome from the aligned English:
 | partial | recoverable but narrowed, broadened or weakened | 0.5 |
 | lost | not recoverable | 0 |
 | distorted | the English conveys different information | 0, also counted as an error |
-| transliterated | the source word is reproduced, not translated | see §7 |
+| not_in_base | the translation's own source edition lacks or changes the word | excluded |
 
 Every outcome records the English words that render the token (the word alignment) and a
 one-line justification, so it can be audited.
@@ -183,26 +182,18 @@ differences.
 
 ## 7. SPS text and transliteration
 
-**Evaluated SPS text:** the running text *without notes*. Removed:
-- 32 inline commentary notes, e.g. `{— *va-yakkirem* — the *nakar* root: he knows them}`;
-- 9 English glosses in braces, e.g. `{— compassion / mercy}`.
+**Evaluated SPS text:** the running text with its transliterations and its `[[a|b]]`
+ambiguity markers (2). Removed: everything in braces, i.e. 245 bare source forms, 32
+commentary notes and 9 English glosses, and the 22 `*` marks.
 
-These are detected mechanically (`ingest._mark_glosses`). Kept as part of the text:
-- transliterations (1,420);
-- bare source forms in braces (245);
-- `[[a|b]]` alternatives (2);
-- `*` marks (22).
-
-Transliterations are scored under three pre-registered rules, and all three are reported:
-
-- **T0 (receiver-oriented).** LEX = lost unless the sentence context makes the meaning
-  recoverable. Grammatical features visible in the form (e.g. Greek case endings) are judged
-  normally.
-- **T½.** LEX = partial.
-- **T1 (source-oriented).** LEX = retained, because the lexeme's identity is preserved.
-
-Proper names are exempt, since every translation transliterates them. If the ranking of the
-translations changes between T0 and T1, that dependence is itself a finding.
+**Transliteration is judged, not pre-decided.** The protocol fixes one criterion for every
+feature of every word in every translation: *is this source information conveyed by the English
+text, as written, to a reader of that text?* A transliterated word (*elohim*, *ruach*,
+*charis*) is judged by this same criterion. The judge decides case by case from the text
+itself (context, established English usage), exactly as it does for an English rendering.
+No outcome is fixed in advance for transliterations. They are flagged (`transliterated=true`)
+so that the report can show separately how transliterated words were judged. Proper names
+are retained whenever the referent is identifiable, whatever the spelling.
 
 ## 8. Neutrality and computational validation (no human raters)
 
@@ -246,15 +237,27 @@ translations changes between T0 and T1, that dependence is itself a finding.
 | Perturbation tests, cross-checks | `validate.py` | next |
 | Aggregation, statistics, per-sentence + total report | `report.py` | — |
 
-## 10. Open points
+## 10. Judges
 
-1. Transliteration: is one of T0 / T½ / T1 the *primary* analysis, or do all three have equal
-   standing?
-2. Bare source forms `{…}` in SPS are kept as running text (§7). Confirm, or remove them too.
-3. Judges: which two model families.
+- **Judge 1: Claude Opus 5** (Anthropic, `claude-opus-5`), with structured JSON output and the
+  Message Batches API.
+- **Judge 2:** a model from a different company (proposed: OpenAI's current flagship GPT model),
+  given identical instructions, inputs and output schema.
+
+Server-side refusal fallbacks are not used, so every judgement comes from the named model.
+Refusals are counted and reported.
+
+One request is one alignment group per translation: 13,636 requests per judge (Genesis
+3,041–3,727 per translation; Ephesians 77–78). The instructions are in `judge.py`
+(`INSTRUCTIONS`), frozen with this protocol.
 
 ## 11. Decision log
 
+- v0.3:
+  - SPS evaluated text keeps transliterations and `[[…]]` only; all brace content and `*`
+    are removed.
+  - Transliteration is judged by the single fidelity criterion; no pre-set T0/T½/T1 rules.
+  - Judge 1 is Claude Opus 5; judge 2 is to come from a second model family.
 - v0.2:
   - SPS evaluated without notes.
   - SPS unit headers ignored; only unit ids kept.
