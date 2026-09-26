@@ -21,8 +21,9 @@ python3 -m sps_validation.report --mock      # pipeline test on random judgement
 python3 -m unittest discover -s tests
 ```
 
-Outputs: `build/report/sentences.csv` (one row per source sentence × translation),
-`build/report/summary.json` and `build/report/report.md` (totals, statistics, validity).
+Outputs in `build/report/`: `report.md` (the four article tables, then details and validity),
+`table1.csv`–`table4.csv` (the article tables, both dimensions: sense conveyed and source preserved),
+`sentences.csv` (one row per source sentence × translation) and `summary.json`.
 
 ## Layout
 

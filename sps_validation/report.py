@@ -65,7 +65,12 @@ def feature_outcomes(record: dict) -> dict[str, dict]:
 
 # --------------------------------------------------------------------------- per sentence
 
-def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict) -> list[dict]:
+DIMENSIONS = {"sense": "outcome", "source": "source_outcome"}
+DIM_LABEL = {"sense": "Sense conveyed", "source": "Source preserved"}
+
+
+def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
+                  key: str = "outcome") -> list[dict]:
     rows = []
     for req in requests:
         per_judge = {j: feature_outcomes(r[req["id"]]) for j, r in results.items() if req["id"] in r}
@@ -84,14 +89,14 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict)
                 # 1/(number of such judges), so scores and outcome counts use the same weights
                 # and a refusal or a missing answer cannot shift the result.
                 answers = [o for fo in per_judge.values()
-                           if (o := fo.get(f["fid"])) and o["outcome"] in SCORE]
+                           if (o := fo.get(f["fid"])) and o.get(key) in SCORE]
                 if not answers:
                     continue
-                vals = [SCORE[o["outcome"]] for o in answers]
+                vals = [SCORE[o[key]] for o in answers]
                 for o in answers:
-                    counts[o["outcome"]] += 1 / len(answers)
+                    counts[o[key]] += 1 / len(answers)
                     if o.get("transliterated"):
-                        translit[o["outcome"]] += 1 / len(answers)
+                        translit[o[key]] += 1 / len(answers)
                 v = sum(vals) / len(vals)
                 scores.append(v)
                 cls_scores[f["class"]].append(v)
@@ -217,7 +222,7 @@ def krippendorff_nominal(pairs: list[tuple[str, str]]) -> float | None:
     return round(1 - Do / De, 4) if De else 1.0
 
 
-def agreement(a: dict, b: dict, requests: list[dict], feats_by_fid: dict) -> dict:
+def agreement(a: dict, b: dict, requests: list[dict], feats_by_fid: dict, key: str = "outcome") -> dict:
     by_class = defaultdict(list)
     for req in requests:
         if req["id"] not in a or req["id"] not in b:
@@ -225,7 +230,9 @@ def agreement(a: dict, b: dict, requests: list[dict], feats_by_fid: dict) -> dic
         fa, fb = feature_outcomes(a[req["id"]]), feature_outcomes(b[req["id"]])
         for fid in req["fids"]:
             if fid in fa and fid in fb:
-                pair = (fa[fid]["outcome"], fb[fid]["outcome"])
+                if key not in fa[fid] or key not in fb[fid]:
+                    continue
+                pair = (fa[fid][key], fb[fid][key])
                 by_class[feats_by_fid[fid]["class"]].append(pair)
                 by_class["ALL"].append(pair)
     return {c: {"n": len(p), "alpha": krippendorff_nominal(p),
@@ -333,7 +340,8 @@ def write_mock(root: Path) -> None:
             with (root / j / f"{set_name}.jsonl").open("w", encoding="utf-8") as f:
                 for r in reqs:
                     res = {"status": "ok", "missing": [],
-                           "features": [{"fid": x, "outcome": rng.choice(outcomes), "english": "", "transliterated":
+                           "features": [{"fid": x, "outcome": rng.choice(outcomes),
+                                         "source_outcome": rng.choice(outcomes), "english": "", "transliterated":
                                          r["translation"] == "SPS" and rng.random() < 0.05, "displaced": False,
                                          "reason": "MOCK"} for x in r["fids"]],
                            "additions": [{"english": "", "type": rng.choice(["grammatical", "unsupported"]),
@@ -353,34 +361,37 @@ def build(root: Path, out: Path, label: str) -> dict:
         raise SystemExit(f"no judge results in {root}")
     out.mkdir(parents=True, exist_ok=True)
 
-    rows = restrict_to_sample(sentence_rows(main_reqs, main, units, feats))
-    _write_csv(out / "sentences.csv", rows)
+    rows_by = {d: restrict_to_sample(sentence_rows(main_reqs, main, units, feats, k)) for d, k in DIMENSIONS.items()}
+    rows = rows_by["sense"]
+    _write_csv(out / "sentences.csv", merge_dimensions(rows_by))
     served = {j: sorted({(x["result"].get("usage") or {}).get("served_model") or x["model"] for x in r.values()})
               for j, r in main.items()}
     summary = {"label": label, "judges": {j: ", ".join(v) for j, v in served.items()},
                "status": {j: dict(Counter(x["result"]["status"] for x in r.values())) for j, r in main.items()},
-               "totals": totals(rows), "comparisons": comparisons(rows)}
-    per_judge = {}
-    for j in main:
-        rj = restrict_to_sample(sentence_rows(main_reqs, {j: main[j]}, units, feats))
-        per_judge[j] = {"totals": totals(rj), "comparisons": comparisons(rj)}
-    summary["per_judge"] = per_judge
+               "dimensions": {d: {"totals": totals(r), "comparisons": comparisons(r)} for d, r in rows_by.items()}}
+    summary["per_judge"] = {
+        j: {d: {"totals": totals(rj), "comparisons": comparisons(rj)}
+            for d, k in DIMENSIONS.items()
+            for rj in [restrict_to_sample(sentence_rows(main_reqs, {j: main[j]}, units, feats, k))]}
+        for j in main}
     if len(main) == 2:
-        summary["judge_agreement"] = agreement(main["claude"], main["gpt"], main_reqs, feats_by_fid)
+        summary["judge_agreement"] = {d: agreement(main["claude"], main["gpt"], main_reqs, feats_by_fid, k)
+                                      for d, k in DIMENSIONS.items()}
     retest = load_results(root, "retest")
     rt_reqs = {r["id"] for r in _jsonl(OUT / "sets" / "retest.jsonl")}
-    summary["test_retest"] = {j: agreement(main[j], retest[j], [r for r in main_reqs if r["id"] in rt_reqs],
-                                           feats_by_fid).get("ALL") for j in retest if j in main}
+    summary["test_retest"] = {
+        d: {j: agreement(main[j], retest[j], [r for r in main_reqs if r["id"] in rt_reqs], feats_by_fid, k).get("ALL")
+            for j in retest if j in main}
+        for d, k in DIMENSIONS.items()}
     pert = load_results(root, "perturb")
     if pert:
         summary["perturbation"] = perturbation_summary(_jsonl(OUT / "sets" / "perturb.jsonl"), pert, main)
     summary["rule_crosscheck"] = rule_crosscheck(main_reqs, main, units, feats)
-    (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
     summary["unaligned_english"] = {
         t: {"pieces": sum(len(r.get("unaligned_english", [])) for r in main_reqs if r["translation"] == t),
             "words": sum(len(" ".join(r.get("unaligned_english", [])).split()) for r in main_reqs if r["translation"] == t)}
         for t in TRANSLATIONS}
-    tables = article_tables(summary, rows)
+    tables = article_tables(summary, rows_by)
     summary["article_tables"] = tables
     for name, t in tables.items():
         with (out / f"{name}.csv").open("w", newline="", encoding="utf-8-sig") as f:  # -sig: opens cleanly in Excel
@@ -388,7 +399,24 @@ def build(root: Path, out: Path, label: str) -> dict:
             w.writerow(t["columns"])
             w.writerows(t["rows"])
     (out / "report.md").write_text(tables_markdown(tables) + "\n" + markdown(summary), encoding="utf-8")
+    (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
     return summary
+
+
+def merge_dimensions(rows_by: dict[str, list[dict]]) -> list[dict]:
+    """One row per sentence × translation, with the scores of both dimensions side by side."""
+    src = {(r["sentence"], r["translation"]): r for r in rows_by["source"]}
+    merged = []
+    for r in rows_by["sense"]:
+        o = src.get((r["sentence"], r["translation"]), {})
+        base = {k: r[k] for k in ("book", "sentence", "translation", "source", "english", "group", "features")}
+        for d, row in (("sense", r), ("source", o)):
+            for k in ("retention", "accuracy", "fidelity", "retained", "partial", "lost", "distorted"):
+                base[f"{d}_{k}"] = row.get(k, "")
+        base["unsupported_additions"] = r["unsupported_additions"]
+        base["transliterated_features"] = r["transliterated_features"]
+        merged.append(base)
+    return merged
 
 
 def restrict_to_sample(rows: list[dict]) -> list[dict]:
@@ -417,51 +445,63 @@ GROUPS = {
 BOOKS_LABEL = {"GEN": "Genesis", "EPH": "Ephesians", "ALL": "Both books"}
 
 
-def article_tables(s: dict, rows: list[dict]) -> dict:
-    """The four comparison tables for the article (also written as table1..4.csv)."""
-    T = s["totals"]
+def article_tables(s: dict, rows_by: dict[str, list[dict]]) -> dict:
+    """The four comparison tables for the article (also written as table1..4.csv).
+    Every table reports both dimensions: sense conveyed and source preserved."""
+    D = s["dimensions"]
     pct = lambda x: round(100 * x, 1)
-    t1 = {"title": "Table 1. Overall fidelity to the source text (%, 95% confidence interval)",
-          "columns": ["Book", "Translation", "Sentences", "Information items", "Retained (retention)",
-                      "Accuracy", "Fidelity", "Fidelity 95% CI"], "rows": []}
+    ci = lambda x: f"{pct(x['fidelity_CI95'][0])}–{pct(x['fidelity_CI95'][1])}"
+
+    t1 = {"title": "Table 1. Overall fidelity to the source text, by dimension (%)",
+          "columns": ["Book", "Translation", "Sentences", "Information items",
+                      "Sense: retained", "Sense: fidelity", "Sense: 95% CI",
+                      "Source: preserved", "Source: fidelity", "Source: 95% CI"], "rows": []}
     for b in ("GEN", "EPH", "ALL"):
         for t in TRANSLATIONS:
-            x = T.get(f"{b}.{t}")
-            if x:
-                t1["rows"].append([BOOKS_LABEL[b], t, x["sentences"], x["features"], pct(x["retention"]),
-                                   pct(x["accuracy"]), pct(x["fidelity"]),
-                                   f"{pct(x['fidelity_CI95'][0])}–{pct(x['fidelity_CI95'][1])}"])
-    t2 = {"title": "Table 2. Retention by type of information, both books (%)",
-          "columns": ["Type of information"] + list(TRANSLATIONS), "rows": []}
+            x, y = D["sense"]["totals"].get(f"{b}.{t}"), D["source"]["totals"].get(f"{b}.{t}")
+            if x and y:
+                t1["rows"].append([BOOKS_LABEL[b], t, x["sentences"], x["features"],
+                                   pct(x["retention"]), pct(x["fidelity"]), ci(x),
+                                   pct(y["retention"]), pct(y["fidelity"]), ci(y)])
+
+    t2 = {"title": "Table 2. Retention by type of information and dimension, both books (%)",
+          "columns": ["Type of information"] + [f"{t} ({d})" for t in TRANSLATIONS for d in ("sense", "source")],
+          "rows": []}
     for label, classes in GROUPS.items():
         line = [label]
         for t in TRANSLATIONS:
-            rs = [r for r in rows if r["translation"] == t]
-            n = sum(r[f"n_{c}"] for r in rs for c in classes)
-            v = sum(r[f"R_{c}"] * r[f"n_{c}"] for r in rs for c in classes if r[f"n_{c}"])
-            line.append(pct(v / n) if n else "—")
+            for d in ("sense", "source"):
+                rs = [r for r in rows_by[d] if r["translation"] == t]
+                n = sum(r[f"n_{c}"] for r in rs for c in classes)
+                v = sum(r[f"R_{c}"] * r[f"n_{c}"] for r in rs for c in classes if r[f"n_{c}"])
+                line.append(pct(v / n) if n else "—")
         t2["rows"].append(line)
-    t3 = {"title": "Table 3. What happens to the source information, both books",
-          "columns": ["Translation", "Retained %", "Partly retained %", "Lost %", "Distorted %",
+
+    t3 = {"title": "Table 3. What happens to the source information, both books (%)",
+          "columns": ["Translation", "Dimension", "Retained", "Partly retained", "Lost", "Distorted",
                       "Unsupported additions per 100 items"], "rows": []}
     for t in TRANSLATIONS:
-        rs = [r for r in rows if r["translation"] == t]
-        n = sum(r["features"] for r in rs)
-        if n:
-            t3["rows"].append([t] + [pct(sum(r[k] for r in rs) / n) for k in ("retained", "partial", "lost", "distorted")]
-                              + [round(100 * sum(r["unsupported_additions"] for r in rs) / n, 2)])
+        for d in ("sense", "source"):
+            rs = [r for r in rows_by[d] if r["translation"] == t]
+            n = sum(r["features"] for r in rs)
+            if n:
+                t3["rows"].append([t, DIM_LABEL[d]] +
+                                  [pct(sum(r[k] for r in rs) / n) for k in ("retained", "partial", "lost", "distorted")] +
+                                  [round(100 * sum(r["unsupported_additions"] for r in rs) / n, 2)])
+
     t4 = {"title": "Table 4. Are the differences real? Pairwise comparison of per-sentence fidelity",
-          "columns": ["Book", "Pair", "Median difference", "Effect size (r)", "p (Holm)", "Significant (p < .05)"],
-          "rows": [], "notes": []}
-    for b in ("GEN", "EPH", "ALL"):
-        c = s["comparisons"].get(b)
-        if not c:
-            continue
-        t4["notes"].append(f"{BOOKS_LABEL[b]}: Friedman χ² = {c['friedman_chi2']}, p = {c['friedman_p']:.3g}, "
-                           f"Kendall's W = {c['kendall_W']}, n = {c['sentences']} sentences.")
-        for p in c["pairwise"]:
-            t4["rows"].append([BOOKS_LABEL[b], p["pair"], p["median_diff"], p["r_rb"], f"{p['p_holm']:.3g}",
-                               "yes" if p["p_holm"] < 0.05 else "no"])
+          "columns": ["Dimension", "Book", "Pair", "Median difference", "Effect size (r)", "p (Holm)",
+                      "Significant (p < .05)"], "rows": [], "notes": []}
+    for d in ("sense", "source"):
+        for b in ("GEN", "EPH", "ALL"):
+            c = D[d]["comparisons"].get(b)
+            if not c:
+                continue
+            t4["notes"].append(f"{DIM_LABEL[d]}, {BOOKS_LABEL[b]}: Friedman χ² = {c['friedman_chi2']}, "
+                               f"p = {c['friedman_p']:.3g}, Kendall's W = {c['kendall_W']}, n = {c['sentences']} sentences.")
+            for p in c["pairwise"]:
+                t4["rows"].append([DIM_LABEL[d], BOOKS_LABEL[b], p["pair"], p["median_diff"], p["r_rb"],
+                                   f"{p['p_holm']:.3g}", "yes" if p["p_holm"] < 0.05 else "no"])
     return {"table1": t1, "table2": t2, "table3": t3, "table4": t4}
 
 
@@ -476,57 +516,58 @@ def tables_markdown(tables: dict) -> str:
 
 
 def markdown(s: dict) -> str:
-    L = [f"# Source-fidelity results{' — ' + s['label'] if s['label'] else ''}", "",
+    L = [f"# Details{' — ' + s['label'] if s['label'] else ''}", "",
          "Judges: " + ", ".join(f"{j} = `{m}`" for j, m in s["judges"].items()), ""]
-    for book, name in (("ALL", "All"), ("GEN", "Genesis"), ("EPH", "Ephesians")):
-        L += [f"## Totals — {name}", "",
-              "| Translation | Sentences | Features | Retention [95% CI] | Loss | Accuracy | Fidelity [95% CI] | Distorted | Unsupported additions |",
-              "|---|---|---|---|---|---|---|---|---|"]
+    for d in ("sense", "source"):
+        T, C = s["dimensions"][d]["totals"], s["dimensions"][d]["comparisons"]
+        for book, name in (("ALL", "All"), ("GEN", "Genesis"), ("EPH", "Ephesians")):
+            L += [f"## {DIM_LABEL[d]} — {name}", "",
+                  "| Translation | Sentences | Features | Retention [95% CI] | Loss | Accuracy | Fidelity [95% CI] | Distorted | Unsupported additions |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+            for t in TRANSLATIONS:
+                x = T.get(f"{book}.{t}")
+                if x:
+                    L.append(f"| {t} | {x['sentences']} | {x['features']} | {x['retention']:.3f} "
+                             f"[{x['retention_CI95'][0]:.3f}, {x['retention_CI95'][1]:.3f}] | {x['loss']:.3f} | "
+                             f"{x['accuracy']:.3f} | {x['fidelity']:.3f} [{x['fidelity_CI95'][0]:.3f}, "
+                             f"{x['fidelity_CI95'][1]:.3f}] | {x['distorted']} | {x['unsupported_additions']} |")
+            L += ["", "Retention by feature class:", "",
+                  "| Translation | " + " | ".join(CLASSES) + " |", "|---|" + "---|" * len(CLASSES)]
+            for t in TRANSLATIONS:
+                x = T.get(f"{book}.{t}")
+                if x:
+                    L.append(f"| {t} | " + " | ".join(f"{x['by_class'][c]:.3f}" if c in x["by_class"] else "—"
+                                                      for c in CLASSES) + " |")
+            L.append("")
+        L += [f"### {DIM_LABEL[d]} — transliterated words", "",
+              "| Translation | features on transliterated words | mean score |", "|---|---|---|"]
         for t in TRANSLATIONS:
-            x = s["totals"].get(f"{book}.{t}")
+            x = T.get(f"ALL.{t}")
             if x:
-                L.append(f"| {t} | {x['sentences']} | {x['features']} | {x['retention']:.3f} "
-                         f"[{x['retention_CI95'][0]:.3f}, {x['retention_CI95'][1]:.3f}] | {x['loss']:.3f} | "
-                         f"{x['accuracy']:.3f} | {x['fidelity']:.3f} [{x['fidelity_CI95'][0]:.3f}, "
-                         f"{x['fidelity_CI95'][1]:.3f}] | {x['distorted']} | {x['unsupported_additions']} |")
-        L += ["", "Retention by feature class:", "",
-              "| Translation | " + " | ".join(CLASSES) + " |", "|---|" + "---|" * len(CLASSES)]
-        for t in TRANSLATIONS:
-            x = s["totals"].get(f"{book}.{t}")
-            if x:
-                L.append(f"| {t} | " + " | ".join(f"{x['by_class'][c]:.3f}" if c in x["by_class"] else "—"
-                                                  for c in CLASSES) + " |")
-        c = s["comparisons"].get(book)
-        if c:
-            L += ["", f"Friedman χ² = {c['friedman_chi2']}, p = {c['friedman_p']:.3g}, Kendall's W = "
-                      f"{c['kendall_W']} (n = {c['sentences']} sentences).", "",
-                  "| Pair | median diff (F) | rank-biserial r | p (Holm) |", "|---|---|---|---|"]
-            for p in c["pairwise"]:
-                L.append(f"| {p['pair']} | {p['median_diff']} | {p['r_rb']} | {p['p_holm']:.3g} |")
+                L.append(f"| {t} | {x['transliterated_features']} | "
+                         f"{x['transliterated_score'] if x['transliterated_score'] is not None else '—'} |")
         L.append("")
-    L += ["## Transliterated words", "", "| Translation | features on transliterated words | mean score |", "|---|---|---|"]
-    for t in TRANSLATIONS:
-        x = s["totals"].get(f"ALL.{t}")
-        if x:
-            L.append(f"| {t} | {x['transliterated_features']} | {x['transliterated_score'] if x['transliterated_score'] is not None else '—'} |")
     if s.get("unaligned_english"):
-        L += ["", "English with no aligned source sentence (judged together with the preceding group):", ""]
+        L += ["English with no aligned source sentence (judged together with the preceding group):", ""]
         for t, v in s["unaligned_english"].items():
             L.append(f"- {t}: {v['pieces']} pieces, {v['words']} words")
-    L += ["", "## Validity of the instrument", ""]
-    if "judge_agreement" in s:
-        L += ["Agreement between judges (Krippendorff's α, nominal):", "", "| Class | n | α | exact agreement |", "|---|---|---|---|"]
-        for c, v in s["judge_agreement"].items():
+    L += ["", "## Validity of the instrument", "",
+          "An operational, rubric-based measurement: agreement shows consistency, planted errors show "
+          "sensitivity to specific errors; neither proves every judgement correct.", ""]
+    for d, ag in s.get("judge_agreement", {}).items():
+        L += [f"Agreement between judges — {DIM_LABEL[d]} (Krippendorff's α, nominal):", "",
+              "| Class | n | α | exact agreement |", "|---|---|---|---|"]
+        for c, v in ag.items():
             L.append(f"| {c} | {v['n']} | {v['alpha']} | {v['exact_agreement']} |")
         L.append("")
-    if s.get("test_retest"):
-        L += ["Test–retest (same judge, 10% of requests re-judged):", ""]
-        for j, v in s["test_retest"].items():
+    for d, rt in s.get("test_retest", {}).items():
+        L += [f"Test–retest — {DIM_LABEL[d]} (same judge, 10% of requests re-judged):", ""]
+        for j, v in rt.items():
             if v:
                 L.append(f"- {j}: α = {v['alpha']}, exact agreement = {v['exact_agreement']} (n = {v['n']})")
         L.append("")
     for j, v in s.get("perturbation", {}).items():
-        L += [f"Known-answer tests — {j} (detection rate of planted errors):", "",
+        L += [f"Known-answer tests — {j} (sense dimension; detection rate of planted errors):", "",
               "| Error | " + " | ".join(TRANSLATIONS) + " | all |", "|---|" + "---|" * (len(TRANSLATIONS) + 1)]
         for k in KINDS:
             cells = [v["detection"].get(f"{t}.{k}", {}).get("rate") for t in TRANSLATIONS]
@@ -537,7 +578,7 @@ def markdown(s: dict) -> str:
               f"Changes on untouched features between perturbed text and its control: "
               f"{v['collateral_change_rate']['rate']}", ""]
     if s.get("rule_crosscheck"):
-        L += ["Rule cross-checks (agreement of judge with a deterministic rule):", ""]
+        L += ["Rule cross-checks (sense dimension; agreement of judge with a deterministic rule):", ""]
         for k, v in s["rule_crosscheck"].items():
             L.append(f"- {k}: {v['rate']} (n = {v['cases']})")
     return "\n".join(L) + "\n"
@@ -550,7 +591,8 @@ def main(argv: list[str]) -> None:
         s = build(root, REPORT / "mock", "MOCK DATA — pipeline test, not a result")
     else:
         s = build(OUT / "results", REPORT, "")
-    print(json.dumps({k: v for k, v in s["totals"].items() if k.startswith("ALL")}, indent=1))
+    for d in DIMENSIONS:
+        print(d, {k: v["fidelity"] for k, v in s["dimensions"][d]["totals"].items() if k.startswith("ALL")})
 
 
 if __name__ == "__main__":

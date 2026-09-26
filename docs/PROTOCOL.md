@@ -204,6 +204,11 @@ are retained whenever the referent is identifiable, whatever the spelling.
    fully blinded, because its transliterations identify it; this is stated as a limitation.
 3. Identical inputs, rules and features are used for every translation.
 
+**Two dimensions.** Every information feature is judged twice: *sense conveyed* (does it reach
+an ordinary reader of the English?) and *source preserved* (can it be recovered from the text as
+written, including through transliterations and literal renderings?). All totals, tables and
+tests are reported for both.
+
 **Validity without human raters.** The instrument is an operational, rubric-based measurement.
 The checks below show consistency and sensitivity to known errors. They do not by themselves
 prove that every judgement is correct, and the article should present them that way.
@@ -260,6 +265,18 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v0.7 (two dimensions, fixed before any paid run):
+  - Every feature receives two verdicts, both reported with equal weight in all tables:
+    - **Sense conveyed**: is the information conveyed to an ordinary reader of the English
+      text?
+    - **Source preserved**: can the information be recovered from the text as written
+      (English words, literal renderings, transliterated source words, markers), even if
+      that takes effort or knowledge of the source?
+  - Reason: the two criteria correspond to different translation aims. Measuring only one
+    would measure only one aim. Both are fixed before any results exist, and neither was
+    chosen on the basis of which translation it favours.
+  - Planted-error tests and rule cross-checks use the sense verdict. Judge agreement and
+    test–retest are reported for both verdicts.
 - v0.6 (external code review, before any paid run):
   - The judges receive **no English glosses**. MACULA's Greek `gloss` comes from the Berean
     Interlinear Bible, and the BSB is one of the translations evaluated. The Hebrew glosses

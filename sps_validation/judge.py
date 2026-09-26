@@ -49,7 +49,7 @@ MAX_TOKENS = 16000
 
 OUTCOMES = ["retained", "partial", "lost", "distorted", "not_in_base"]
 
-INSTRUCTIONS = """You are evaluating how faithfully an English translation conveys the information of a Hebrew or Greek source text. You are one step of a fixed, published measurement procedure; apply its rules literally and identically to every input.
+INSTRUCTIONS = """You are evaluating how faithfully an English translation renders the information of a Hebrew or Greek source text, along two dimensions. You are one step of a fixed, published measurement procedure; apply its rules literally and identically to every input.
 
 ## Input
 - SOURCE: one or more source sentences, word by word. Each word has an id, its form, its lemma, its parsing and its Strong's number. No English gloss is given: determine the meaning of each word yourself from the Hebrew or Greek.
@@ -58,29 +58,41 @@ INSTRUCTIONS = """You are evaluating how faithfully an English translation conve
 - ENGLISH: the passage of the translation aligned to the source. BEFORE / AFTER: the neighbouring English, for reference only.
 - TEXT NOTES (optional): places where this translation follows a different edition of the source.
 
-## The single criterion
-For each feature ask: **is this piece of source information conveyed by the English text, as written, to a reader of that text?**
+## Two dimensions, two verdicts per feature
+Every feature receives two independent verdicts. Apply both to every translation in exactly the same way.
+
+**outcome — SENSE CONVEYED.** Is this piece of source information conveyed by the English text, as written, to an ordinary reader of that text?
 Judge what the English says, not how it says it. Word order, word class, sentence division, and literal vs. idiomatic style are irrelevant: an idiomatic rendering that conveys the information is retained; a literal rendering that conveys a different meaning is distorted.
 
-Outcomes:
-- retained: conveyed.
-- partial: conveyed only in part — narrowed, broadened, weakened, or left vaguer than the source.
-- lost: not conveyed.
-- distorted: the English conveys different information (wrong sense, time, agent, relation, referent…).
-- not_in_base: the TEXT NOTES show that this translation's source edition lacks the word or reads it differently; the feature is not scored.
+**source_outcome — SOURCE PRESERVED.** Is this piece of source information preserved in the English text, so that it can be recovered from the text as written — through the English words, literal renderings, word order, transliterated source words or explicit markers — even if an ordinary reader would need effort or knowledge of the source to recover it?
+Here what counts is what the text keeps of the source itself: the identity and literal sense of each source word, its grammatical distinctions and its relations. A rendering that conveys the meaning while replacing the source's own words, image or distinction preserves the meaning but not the replaced element.
 
-Rules that apply equally to every translation:
-1. Words written in the English text in a non-English form (transliterations such as *elohim*, *nephesh*, *charis*) are judged by the same criterion as any other word: is the information conveyed to a reader of this English text? Decide from the text itself (context, established English usage). Set transliterated=true for such features.
-2. Proper names: a name is retained if the person, place or people referred to is identifiable, whatever its spelling or vocalisation (e.g. Hushim / Hashum, Yosef / Joseph). It is distorted only if it points to a different referent.
-3. An explicit alternative in the text such as [[a|the]] or [[x / y]] presents both readings. If the source is genuinely open between them, the ambiguity is conveyed.
-4. If the information is conveyed in BEFORE or AFTER instead of ENGLISH (the alignment boundary fell differently), score it as if it were in ENGLISH and set displaced=true.
-5. ARG: retained when the English makes clear who does what to whom, in any construction (active, passive, nominalisation…).
-6. Grammatical features the English cannot express grammatically are retained when their meaning contribution is conveyed by other means, and lost when it is not. STEM and VOICE: retained when the English verb or construction has the meaning the verb has in that stem or voice (causative, passive, reflexive, a distinct lexical meaning…); a stem that is simply the verb's ordinary form needs no additional English marker.
-7. REF: retained when the English makes clear who is meant. Distinctions English cannot mark (masculine vs feminine "you", singular vs plural "you", the gender of "they") are not required when the referent is clear.
-8. NUM: retained when the English conveys the same count. An English noun plural in form but naming the same thing (wages, clothes) and an English collective singular count as the same count. Where no count is at issue (e.g. a noun used adverbially), NUM is retained unless the English asserts a different count.
-9. Fixed expressions: score what each word contributes to the meaning in this context. In expressions whose words no longer carry their separate literal sense (compound prepositions such as לִפְנֵי "before", fixed time or place expressions), a rendering that conveys the whole expression retains the features of its parts. Where the source uses a live image or metaphor, the image is part of the information.
-10. Conjunctions and other REL features are retained when the relation they express (addition, sequence, contrast, cause, purpose, condition…) is conveyed, whether by a word, by clause order, or by sentence structure.
-11. Do not reward or penalise style, fluency, archaism or modernity.
+Outcomes (the same scale for both verdicts):
+- retained: conveyed (outcome) / preserved (source_outcome).
+- partial: only in part — narrowed, broadened, weakened, vaguer, or preserved only indirectly.
+- lost: not conveyed / not preserved.
+- distorted: the English conveys different information (wrong sense, time, agent, relation, referent…).
+- not_in_base: the TEXT NOTES show that this translation's source edition lacks the word or reads it differently; the feature is not scored (use it for both verdicts).
+
+Rules for both dimensions, applied equally to every translation:
+1. Proper names: retained if the person, place or people referred to is identifiable, whatever the spelling (Hushim / Hashum, Yosef / Joseph). Distorted only if it points to a different referent.
+2. An explicit alternative in the text such as [[a|the]] or [[x / y]] presents both readings; if the source is genuinely open between them, the ambiguity is retained.
+3. If the information is found in BEFORE or AFTER instead of ENGLISH (the alignment boundary fell differently), score it as if it were in ENGLISH and set displaced=true.
+4. Words written in a non-English form (transliterations such as *elohim*, *nephesh*, *charis*): set transliterated=true. For SENSE, judge whether the meaning reaches an ordinary reader of this English text (context, established English usage). For SOURCE, a transliteration preserves the identity of the source word, and grammatical information visible in its form (e.g. a Greek case ending) is preserved.
+5. Do not reward or penalise style, fluency, archaism or modernity.
+
+Rules for SENSE CONVEYED (outcome):
+6. ARG: retained when the English makes clear who does what to whom, in any construction (active, passive, nominalisation…).
+7. Grammatical features the English cannot express grammatically are retained when their meaning contribution is conveyed by other means, and lost when it is not. STEM and VOICE: retained when the English verb or construction has the meaning the verb has in that stem or voice; a stem that is simply the verb's ordinary form needs no additional English marker.
+8. REF: retained when the English makes clear who is meant. Distinctions English cannot mark (masculine vs feminine "you", singular vs plural "you", the gender of "they") are not required when the referent is clear.
+9. NUM: retained when the English conveys the same count. An English plural-form noun naming the same thing (wages, clothes) and an English collective singular count as the same count. Where no count is at issue (e.g. a noun used adverbially), NUM is retained unless the English asserts a different count.
+10. Fixed expressions: in expressions whose words no longer carry their separate literal sense (compound prepositions such as לִפְנֵי "before", fixed time or place expressions), a rendering that conveys the whole expression retains the features of its parts. Where the source uses a live image or metaphor, the image is part of the information.
+11. Conjunctions and other REL features are retained when the relation they express (addition, sequence, contrast, cause, purpose, condition…) is conveyed, whether by a word, by clause order, or by sentence structure.
+
+Rules for SOURCE PRESERVED (source_outcome):
+12. LEX: retained when the English keeps the source word's own sense (a literal equivalent or a transliteration of that word); partial when only the sense of a larger expression is kept (e.g. "before" for לִפְנֵי "to the face of"); lost when the word leaves no trace.
+13. Grammatical distinctions (aspect, stem, voice, mood, person, gender, number, definiteness): retained only when the text itself marks the distinction (by an English form, word, transliterated form or marker); partial when it is recoverable only from context; lost when it is not recoverable.
+14. REL and ARG: retained when the relation is marked in the text as in the source (a conjunction rendered as a conjunction, a construct/genitive relation marked as such); partial when it is recoverable only from clause order or context.
 
 ## Additions
 List English content that corresponds to no source word in SOURCE, classified as:
@@ -90,7 +102,7 @@ List English content that corresponds to no source word in SOURCE, classified as
 Do not list material that belongs to BEFORE/AFTER.
 
 ## Output
-Return one entry for every feature id given, in the same order, and nothing else. For each: the English words that carry it (empty if none) and a short reason (max. 12 words)."""
+Return one entry for every feature id given, in the same order, and nothing else. For each: both verdicts, the English words that carry the feature (empty if none) and one short reason covering both verdicts (max. 15 words)."""
 
 SCHEMA = {
     "type": "object",
@@ -102,12 +114,13 @@ SCHEMA = {
                 "properties": {
                     "fid": {"type": "string"},
                     "outcome": {"type": "string", "enum": OUTCOMES},
+                    "source_outcome": {"type": "string", "enum": OUTCOMES},
                     "english": {"type": "string"},
                     "transliterated": {"type": "boolean"},
                     "displaced": {"type": "boolean"},
                     "reason": {"type": "string"},
                 },
-                "required": ["fid", "outcome", "english", "transliterated", "displaced", "reason"],
+                "required": ["fid", "outcome", "source_outcome", "english", "transliterated", "displaced", "reason"],
                 "additionalProperties": False,
             },
         },
@@ -431,10 +444,12 @@ def pilot_report() -> Path:
             for j in out:
                 o = out[j].get(fid)
                 if o:
-                    vals.append(o["outcome"])
+                    vals.append((o["outcome"], o.get("source_outcome")))
                     flag = " · translit" if o.get("transliterated") else ""
                     flag += " · displaced" if o.get("displaced") else ""
-                    cells.append(f"<td><b style='color:{colour.get(o['outcome'], '#000')}'>{o['outcome']}</b>{flag}"
+                    so = o.get("source_outcome", "—")
+                    cells.append(f"<td>sense: <b style='color:{colour.get(o['outcome'], '#000')}'>{o['outcome']}</b>"
+                                 f"<br>source: <b style='color:{colour.get(so, '#000')}'>{so}</b>{flag}"
                                  f"<br><small>«{html.escape(o['english'])}» {html.escape(o['reason'])}</small></td>")
                 else:
                     cells.append("<td>—</td>")
@@ -450,7 +465,7 @@ def pilot_report() -> Path:
                 rows.append(f"<p><b>{j} — additions:</b> " + "; ".join(
                     f"{html.escape(x['type'])}: «{html.escape(x['english'])}»" for x in a) + "</p>")
         rows.append("</section>")
-    head = (f"<p>{len(ids)} pilot sentences. Same outcome from both judges: "
+    head = (f"<p>{len(ids)} pilot sentences. Same pair of verdicts (sense, source) from both judges: "
             f"<b>{agree}/{total} ({100 * agree / max(total, 1):.0f}%)</b> of information items.</p>") if total else ""
     page = ("<!doctype html><meta charset=utf-8><title>Pilot judgements</title><style>"
             "body{font-family:system-ui,sans-serif;max-width:1100px;margin:auto;padding:16px;line-height:1.4}"
