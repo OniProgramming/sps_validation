@@ -17,10 +17,10 @@ import sys
 from pathlib import Path
 
 from .judge import JUDGES, OUT, _jsonl, write_set
-from .validate import build_perturbations, build_retest
+from .validate import KINDS, build_perturbations, build_retest
 
 SEED = 20260925
-PER_CELL = 10  # planted errors per translation × error type (4 × 7 × 10 = 280)
+PER_CELL = 10  # planted errors per translation × error type (4 × 6 × 10 = 240, + 240 controls)
 STEP = 25
 
 
@@ -55,7 +55,7 @@ def plan(budget: float) -> dict:
     all_reqs = _jsonl(OUT / "sets" / "all.jsonl")
     price = cost_per_request()
     order = genesis_order()
-    extra = 4 * 7 * PER_CELL  # planted errors
+    extra = 2 * 4 * len(KINDS) * PER_CELL  # planted errors + their unperturbed controls
     best = None
     for n in range(STEP, len(order) + STEP, STEP):
         sample = set(order[:n])
@@ -92,7 +92,7 @@ def write(budget: float) -> dict:
 def describe(p: dict) -> str:
     return (f"Plan: {p['n']} randomly chosen Genesis sentences (of 4,220) + all 78 Ephesians sentences, "
             f"in all 4 translations.\n"
-            f"Requests per judge: {p['requests_total']} (main {p['requests_main']}, 10% repeat, 280 planted errors).\n"
+            f"Requests per judge: {p['requests_total']} (main {p['requests_main']}, 10% repeat, 240 planted errors + 240 controls).\n"
             + "\n".join(f"Estimated cost {j} ({p['models'][j]}): ${p['cost'][j]:.2f}  "
                         f"(${p['per_request'][j]:.4f} per request)" for j in p["cost"])
             + f"\nBudget per account: ${p['budget_per_judge']:.2f}")

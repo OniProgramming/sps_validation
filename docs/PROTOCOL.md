@@ -204,7 +204,9 @@ are retained whenever the referent is identifiable, whatever the spelling.
    fully blinded, because its transliterations identify it; this is stated as a limitation.
 3. Identical inputs, rules and features are used for every translation.
 
-**Validity without human raters**
+**Validity without human raters.** The instrument is an operational, rubric-based measurement.
+The checks below show consistency and sensitivity to known errors. They do not by themselves
+prove that every judgement is correct, and the article should present them that way.
 4. **Two independent judges** from different model families score everything. Their agreement
    is reported per feature class (Krippendorff's α). Disagreements are scored as the mean,
    and the main results are also reported for each judge separately.
@@ -258,6 +260,31 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v0.6 (external code review, before any paid run):
+  - The judges receive **no English glosses**. MACULA's Greek `gloss` comes from the Berean
+    Interlinear Bible, and the BSB is one of the translations evaluated. The Hebrew glosses
+    (Cherith) are removed too, for symmetry. Judges get the form, lemma, parsing, Strong's number
+    and semantic-domain codes, and must determine meaning from the source language.
+    Glosses remain in two places only: the aligner (to locate text) and the planted-error
+    builder (to find the English word to alter). Neither place scores anything.
+  - Scoring fix: a feature's outcome counts are weighted by the judges that actually answered
+    it. Before, a refusal by one judge halved the counts but not the scores, which inflated
+    accuracy.
+  - English with no aligned source sentence is no longer dropped. It is judged together with
+    the preceding group (where it can be listed as an addition) and counted in the report.
+  - Planted errors are built so that the English stays grammatical: attributive adjectives
+    only; number flips only inside prepositional phrases, with correct inflection; tense
+    shift past → future ("said" → "will say"). The agent/patient swap is not used, because
+    too few grammatical swaps exist in all four translations. Each planted error has an
+    unperturbed control judged in the same run, so sensitivity and false-alarm rate are
+    measured separately. The number of cases is equalised across translations.
+  - A saved run is resumed only if model, settings, instructions, schema and requests are
+    identical (fingerprint). Otherwise it is refused. Every result records the model reported
+    by the API.
+  - Wording: the instrument is an operational, rubric-based measurement. Agreement between
+    judges shows consistency, not correctness. The planted-error tests show sensitivity to
+    specific error types. Neither establishes validity by itself.
+  - Pilot 1 (with glosses) is superseded; a new pilot is run with the final instructions.
 - v0.5 (budget):
   - Judges changed to the smaller models of the same two companies: Claude Haiku 4.5 and
     GPT-5-mini (reasoning effort medium). The reason is cost.

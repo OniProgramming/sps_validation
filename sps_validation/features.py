@@ -127,8 +127,8 @@ def frame_features(tokens: list[dict], lang: str) -> list[dict]:
                     {
                         "token": t["id"],
                         "class": "ARG",
-                        "value": f"{role} of '{t.get('gloss') or t['text']}' = "
-                        + " + ".join(a.get("gloss") or a["text"] for a in args),
+                        "value": f"{role} of {t.get('lemma') or t['text']} ({t['text']}) = "
+                        + " + ".join(f"{a.get('lemma') or a['text']} ({a['text']})" for a in args),
                         "args": [a["id"] for a in args],
                     }
                 )
@@ -136,7 +136,11 @@ def frame_features(tokens: list[dict], lang: str) -> list[dict]:
 
 
 def _lex_value(tok: dict) -> str:
-    parts = [tok.get("lemma", ""), tok.get("gloss") or tok.get("english") or ""]
+    # No English gloss: MACULA's glosses come from the Berean Interlinear (Greek) and
+    # Cherith (Hebrew); one of the evaluated translations is the BSB, so glosses must
+    # not reach the judges. The judges get the lemma, Strong's number and domain codes.
+    strong = tok.get("strong") or tok.get("strongnumberx")
+    parts = [tok.get("lemma", ""), f"Strong {strong}" if strong else ""]
     if tok.get("ln"):
         parts.append(f"LN {tok['ln']}")
     if tok.get("lexdomain"):
@@ -168,7 +172,7 @@ def carries_number(tok: dict) -> bool:
     lemma = tok.get("lemma")
     if lemma in NO_COUNT_PLURALS:
         return False
-    if lemma == "אֱלֹהִים":
+    if lemma == "אֱלֹהִים":  # the gloss decides God vs gods here only; it is not shown to the judges
         return (tok.get("gloss") or tok.get("english") or "").lower().startswith("gods")
     return True
 

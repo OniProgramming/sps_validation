@@ -5,7 +5,7 @@ from sps_validation.docx_reader import Run
 from sps_validation.ingest import _spans, strip_spans
 from sps_validation.align import skeleton
 from sps_validation.features import carries_number, hebrew_features
-from sps_validation.report import krippendorff_nominal
+from sps_validation.report import krippendorff_nominal, sentence_rows
 from sps_validation.validate import perturb
 from sps_validation.segment import _split_clauses, _variant_kind, _wh_text_reading
 
@@ -118,6 +118,46 @@ class StatisticsTest(unittest.TestCase):
     def test_krippendorff(self):
         self.assertEqual(krippendorff_nominal([("a", "a"), ("b", "b"), ("a", "a")]), 1.0)
         self.assertLess(krippendorff_nominal([("a", "b"), ("b", "a"), ("a", "b"), ("b", "a")]), 0)
+
+
+class UnalignedEnglishTest(unittest.TestCase):
+    def test_unaligned_english_is_kept_for_judging(self):
+        from sps_validation.judge import merge_unaligned
+        beads = [{"units": [], "english": "Intro."}, {"units": ["A"], "english": "One."},
+                 {"units": [], "english": "Extra."}, {"units": ["B"], "english": "Two."}]
+        out = merge_unaligned(beads)
+        self.assertEqual([b["english"] for b in out], ["Intro. One. Extra.", "Two."])
+        self.assertEqual(out[0]["unaligned"], ["Intro.", "Extra."])
+
+
+class ResumeSafetyTest(unittest.TestCase):
+    def test_fingerprint_changes_with_model_or_prompt(self):
+        from sps_validation import judge as J
+
+        class Fake:
+            model = "m1"
+            def params(self, prompt):
+                return {"model": self.model, "p": prompt}
+
+        a, b = Fake(), Fake()
+        b.model = "m2"
+        reqs = {"r1": {"prompt": "x"}}
+        self.assertNotEqual(J.fingerprint(a, reqs), J.fingerprint(b, reqs))
+        self.assertNotEqual(J.fingerprint(a, reqs), J.fingerprint(a, {"r1": {"prompt": "y"}}))
+        self.assertEqual(J.fingerprint(a, reqs), J.fingerprint(a, {"r1": {"prompt": "x"}}))
+
+
+class ScoringTest(unittest.TestCase):
+    def test_a_refusing_judge_does_not_change_the_score(self):
+        units = {"U": {"text": "x", "tokens": []}}
+        feats = {"U": [{"fid": "U/1", "class": "LEX"}, {"fid": "U/2", "class": "LEX"}]}
+        req = {"id": "r", "book": "GEN", "translation": "WEB", "units": ["U"], "english": "e", "fids": ["U/1", "U/2"]}
+        ok = {"result": {"status": "ok", "additions": [], "features": [
+            {"fid": "U/1", "outcome": "retained"}, {"fid": "U/2", "outcome": "distorted"}]}}
+        one = sentence_rows([req], {"claude": {"r": ok}}, units, feats)[0]
+        two = sentence_rows([req], {"claude": {"r": ok}, "gpt": {"r": {"result": {"status": "refusal"}}}}, units, feats)[0]
+        self.assertEqual(one["fidelity"], two["fidelity"])
+        self.assertEqual(two["distorted"], 1.0)
 
 
 class PerturbationTest(unittest.TestCase):

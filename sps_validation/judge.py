@@ -52,7 +52,7 @@ OUTCOMES = ["retained", "partial", "lost", "distorted", "not_in_base"]
 INSTRUCTIONS = """You are evaluating how faithfully an English translation conveys the information of a Hebrew or Greek source text. You are one step of a fixed, published measurement procedure; apply its rules literally and identically to every input.
 
 ## Input
-- SOURCE: one or more source sentences, word by word. Each word has an id, its form, lemma, parsing and a lexical gloss.
+- SOURCE: one or more source sentences, word by word. Each word has an id, its form, its lemma, its parsing and its Strong's number. No English gloss is given: determine the meaning of each word yourself from the Hebrew or Greek.
 - FEATURES: the list of information features to judge. Each belongs to one source word:
   LEX lexical sense / semantic field · ASP aspect or tense-form · STEM Hebrew derived-stem meaning · VOICE middle/passive · MOOD non-indicative mood · REF who is meant (person/gender/number) · NUM noun number · DEF definiteness · REL relation expressed by a word or form (preposition, conjunction, construct/genitive/dative relation…) · NEG negation · ARG who does what to whom (semantic role).
 - ENGLISH: the passage of the translation aligned to the source. BEFORE / AFTER: the neighbouring English, for reference only.
@@ -141,19 +141,39 @@ def build_requests() -> list[dict]:
         units = {u["unit_id"]: u for u in _jsonl(f"build/sources/{code}.units.jsonl")}
         feats = {f["unit_id"]: f["features"] for f in _jsonl(f"build/features/{code}.features.jsonl")}
         for t in TRANSLATIONS:
-            beads = _jsonl(f"build/align/{t}.{code}.jsonl")
+            beads = merge_unaligned(_jsonl(f"build/align/{t}.{code}.jsonl"))
             for k, bead in enumerate(beads):
-                if not bead["units"]:
-                    continue  # English with no source counterpart: counted as addition by report.py
                 before = beads[k - 1]["english"] if k else ""
                 after = beads[k + 1]["english"] if k + 1 < len(beads) else ""
                 req = {"id": _blind_id(t, code, bead["units"]), "translation": t, "book": code,
                        "units": bead["units"], "english": bead["english"], "before": before,
                        "after": after, "edition": BASE_EDITION.get((t, code)),
+                       "unaligned_english": bead.get("unaligned", []),
                        "fids": [f["fid"] for u in bead["units"] for f in feats[u]]}
                 req["prompt"] = render_request(req, units, feats)
                 requests.append(req)
     return requests
+
+
+def merge_unaligned(beads: list[dict]) -> list[dict]:
+    """English with no source counterpart (0:1 alignment) is appended to the preceding
+    group (or prepended to the first one), so the judge sees it and can list it as an
+    addition. Nothing drops out of the evaluation; the merged text is recorded."""
+    out: list[dict] = []
+    pending: list[str] = []
+    for b in beads:
+        if b["units"]:
+            b = dict(b, unaligned=list(pending))
+            if pending:
+                b["english"] = " ".join(pending + [b["english"]])
+            pending = []
+            out.append(b)
+        elif out:
+            out[-1]["english"] += " " + b["english"]
+            out[-1]["unaligned"] = out[-1].get("unaligned", []) + [b["english"]]
+        else:
+            pending.append(b["english"])
+    return out
 
 
 def render_request(req: dict, units: dict, feats: dict) -> str:
@@ -177,11 +197,11 @@ def render(units, features, english, before, after, edition) -> str:
     for u in units:
         lines.append(f"[{u['unit_id']}] {u['text']}")
         for tok in u["tokens"]:
-            if not tok["text"] and not tok.get("gloss"):
+            if not tok["text"] and not tok.get("lemma"):
                 continue
             parse = ", ".join(f"{k}={tok[k]}" for k in TOKEN_FIELDS if tok.get(k))
-            lines.append(f"  {tok['id']} | {tok['text'] or '∅'} | {tok.get('lemma', '')} | {parse} | "
-                         f"gloss: {tok.get('gloss') or tok.get('english') or ''}")
+            strong = tok.get("strong") or tok.get("strongnumberx") or ""
+            lines.append(f"  {tok['id']} | {tok['text'] or '∅'} | {tok.get('lemma', '')} | {parse} | Strong {strong}")
     lines.append("\nFEATURES (fid | word id | class | value)")
     for f in features:
         lines.append(f"{f['fid']} | {f['token']} | {f['class']} | {f['value']}")
@@ -239,7 +259,7 @@ class ClaudeJudge:
 
     def parse(self, message, fids) -> dict:
         usage = {"input": message.usage.input_tokens, "output": message.usage.output_tokens,
-                 "cache_read": message.usage.cache_read_input_tokens or 0}
+                 "cache_read": message.usage.cache_read_input_tokens or 0, "served_model": message.model}
         if message.stop_reason == "refusal":
             return {"status": "refusal", "usage": usage}
         if message.stop_reason == "max_tokens":
@@ -296,7 +316,8 @@ class GptJudge:
 
     def parse(self, resp: dict, fids) -> dict:
         usage = resp.get("usage") or {}
-        usage = {"input": usage.get("input_tokens"), "output": usage.get("output_tokens")}
+        usage = {"input": usage.get("input_tokens"), "output": usage.get("output_tokens"),
+                 "served_model": resp.get("model")}
         if resp.get("status") == "incomplete":
             return {"status": "truncated", "usage": usage}
         for item in resp.get("output", []):
@@ -348,6 +369,19 @@ class GptJudge:
 
 def get_judge(name: str):
     return {"claude": ClaudeJudge, "gpt": GptJudge}[name]()
+
+
+def fingerprint(judge, reqs: dict) -> str:
+    """Identity of an experiment: model, provider settings, instructions, schema and the
+    exact requests. A saved run is resumed only if all of these are unchanged."""
+    probe = judge.params("") if hasattr(judge, "params") else judge.body("")
+    h = hashlib.sha256()
+    h.update(json.dumps({"model": judge.model, "settings": probe, "instructions": INSTRUCTIONS,
+                         "schema": SCHEMA}, sort_keys=True, ensure_ascii=False).encode())
+    for rid in sorted(reqs):
+        h.update(rid.encode())
+        h.update(reqs[rid]["prompt"].encode())
+    return h.hexdigest()
 
 
 def pilot(judge_name: str, n: int) -> None:
@@ -435,11 +469,19 @@ def run(judge_name: str, set_name: str) -> None:
     reqs = {r["id"]: r for r in _jsonl(OUT / "sets" / f"{set_name}.jsonl")}
     state_path = OUT / "state" / f"{judge_name}.{set_name}.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
+    fp = fingerprint(judge, reqs)
     if state_path.exists():
-        batch_ids = json.loads(state_path.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict) or state.get("fingerprint") != fp:
+            raise SystemExit(
+                f"{state_path} belongs to a different experiment (model, instructions or requests changed).\n"
+                f"Its batches are not reused. Delete that file to start a new run of '{set_name}' with {judge.model}.")
+        batch_ids = state["batches"]
+        print(f"resuming {len(batch_ids)} submitted batch(es) of the same experiment", flush=True)
     else:
         batch_ids = judge.submit(list(reqs.values()))
-        state_path.write_text(json.dumps(batch_ids), encoding="utf-8")
+        state_path.write_text(json.dumps({"fingerprint": fp, "model": judge.model, "set": set_name,
+                                          "batches": batch_ids}), encoding="utf-8")
     while not all(judge.done(b) for b in batch_ids):
         time.sleep(60)
     fids = {i: r["fids"] for i, r in reqs.items()}

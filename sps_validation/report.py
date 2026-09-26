@@ -80,16 +80,18 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict)
             counts = Counter()
             translit = Counter()
             for f in fl:
-                vals = []
-                for j, fo in per_judge.items():
-                    o = fo.get(f["fid"])
-                    if o and o["outcome"] in SCORE:
-                        vals.append(SCORE[o["outcome"]])
-                        counts[f"{o['outcome']}"] += 1 / len(per_judge)
-                        if o.get("transliterated"):
-                            translit[o["outcome"]] += 1 / len(per_judge)
-                if not vals:
+                # Only judges that actually scored this feature count; each gets weight
+                # 1/(number of such judges), so scores and outcome counts use the same weights
+                # and a refusal or a missing answer cannot shift the result.
+                answers = [o for fo in per_judge.values()
+                           if (o := fo.get(f["fid"])) and o["outcome"] in SCORE]
+                if not answers:
                     continue
+                vals = [SCORE[o["outcome"]] for o in answers]
+                for o in answers:
+                    counts[o["outcome"]] += 1 / len(answers)
+                    if o.get("transliterated"):
+                        translit[o["outcome"]] += 1 / len(answers)
                 v = sum(vals) / len(vals)
                 scores.append(v)
                 cls_scores[f["class"]].append(v)
@@ -232,39 +234,52 @@ def agreement(a: dict, b: dict, requests: list[dict], feats_by_fid: dict) -> dic
 
 
 def perturbation_summary(pert_reqs, pert_res, main_res) -> dict:
+    """Sensitivity = planted error detected in the perturbed text; false-alarm rate = the
+    same "detection" on the identical, unperturbed control judged in the same run.
+    Only cases whose original (main run) target was judged retained are counted."""
     out = {}
+    controls = {q["id"]: q for q in pert_reqs if q["perturbation"].get("control")}
+    cases = [q for q in pert_reqs if not q["perturbation"].get("control")]
+    unsupported = lambda r: sum(a["type"] == "unsupported" for a in r["result"].get("additions", []))
     for j in pert_res:
-        cell = defaultdict(lambda: [0, 0])
+        cell = defaultdict(lambda: [0, 0, 0, 0])  # hits, cases, false alarms, controls
         collateral = [0, 0]
-        for q in pert_reqs:
-            if q["id"] not in pert_res[j] or q["base_id"] not in main_res.get(j, {}):
+        for q in cases:
+            ctrl_id = "c" + q["id"][1:]
+            if q["id"] not in pert_res[j] or ctrl_id not in pert_res[j] or q["base_id"] not in main_res.get(j, {}):
                 continue
-            new, old = pert_res[j][q["id"]], main_res[j][q["base_id"]]
-            fn, fo = feature_outcomes(new), feature_outcomes(old)
+            new, ctl, old = pert_res[j][q["id"]], pert_res[j][ctrl_id], main_res[j][q["base_id"]]
+            if any(r["result"].get("status") != "ok" for r in (new, ctl, old)):
+                continue
             kind, target = q["perturbation"]["kind"], q["perturbation"]["target"]
             if kind == "addition":
-                cnt = lambda r: sum(a["type"] == "unsupported" for a in r["result"].get("additions", []))
-                if new["result"].get("status") != "ok" or old["result"].get("status") != "ok":
-                    continue
-                hit = cnt(new) > cnt(old)
+                hit = unsupported(new) > unsupported(old)
+                alarm = unsupported(ctl) > unsupported(old)
             else:
-                if target not in fn or target not in fo or fo[target]["outcome"] != "retained":
-                    continue  # only cases whose original rendering was judged retained
+                fn, fc, fo = feature_outcomes(new), feature_outcomes(ctl), feature_outcomes(old)
+                if not all(target in x for x in (fn, fc, fo)) or fo[target]["outcome"] != "retained":
+                    continue
                 hit = SCORE.get(fn[target]["outcome"], 1) < 1
-                for fid in fo:
+                alarm = SCORE.get(fc[target]["outcome"], 1) < 1
+                for fid in fc:
                     if fid != target and fid in fn:
-                        collateral[0] += fo[fid]["outcome"] != fn[fid]["outcome"]
+                        collateral[0] += fc[fid]["outcome"] != fn[fid]["outcome"]
                         collateral[1] += 1
-            key = (q["translation"], kind)
-            cell[key][0] += hit
-            cell[key][1] += 1
+            c = cell[(q["translation"], kind)]
+            c[0] += hit
+            c[1] += 1
+            c[2] += alarm
+            c[3] += 1
+
+        def agg(keys):
+            v = [sum(cell[k][i] for k in keys) for i in range(4)]
+            return {"detected": v[0], "cases": v[1], "rate": round(v[0] / v[1], 3) if v[1] else None,
+                    "false_alarms": v[2], "false_alarm_rate": round(v[2] / v[3], 3) if v[3] else None}
+
         out[j] = {
-            "detection": {f"{t}.{k}": {"detected": v[0], "cases": v[1], "rate": round(v[0] / v[1], 3) if v[1] else None}
-                          for (t, k), v in sorted(cell.items())},
-            "by_kind": {k: _rate(sum(v[0] for (t, kk), v in cell.items() if kk == k),
-                                 sum(v[1] for (t, kk), v in cell.items() if kk == k)) for k in KINDS},
-            "by_translation": {t: _rate(sum(v[0] for (tt, k), v in cell.items() if tt == t),
-                                        sum(v[1] for (tt, k), v in cell.items() if tt == t)) for t in TRANSLATIONS},
+            "detection": {f"{t}.{k}": agg([(t, k)]) for (t, k) in sorted(cell)},
+            "by_kind": {k: agg([x for x in cell if x[1] == k]) for k in KINDS},
+            "by_translation": {t: agg([x for x in cell if x[0] == t]) for t in TRANSLATIONS},
             "collateral_change_rate": _rate(*collateral),
         }
     return out
@@ -340,7 +355,9 @@ def build(root: Path, out: Path, label: str) -> dict:
 
     rows = restrict_to_sample(sentence_rows(main_reqs, main, units, feats))
     _write_csv(out / "sentences.csv", rows)
-    summary = {"label": label, "judges": {j: next(iter(r.values()))["model"] for j, r in main.items()},
+    served = {j: sorted({(x["result"].get("usage") or {}).get("served_model") or x["model"] for x in r.values()})
+              for j, r in main.items()}
+    summary = {"label": label, "judges": {j: ", ".join(v) for j, v in served.items()},
                "status": {j: dict(Counter(x["result"]["status"] for x in r.values())) for j, r in main.items()},
                "totals": totals(rows), "comparisons": comparisons(rows)}
     per_judge = {}
@@ -359,6 +376,10 @@ def build(root: Path, out: Path, label: str) -> dict:
         summary["perturbation"] = perturbation_summary(_jsonl(OUT / "sets" / "perturb.jsonl"), pert, main)
     summary["rule_crosscheck"] = rule_crosscheck(main_reqs, main, units, feats)
     (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
+    summary["unaligned_english"] = {
+        t: {"pieces": sum(len(r.get("unaligned_english", [])) for r in main_reqs if r["translation"] == t),
+            "words": sum(len(" ".join(r.get("unaligned_english", [])).split()) for r in main_reqs if r["translation"] == t)}
+        for t in TRANSLATIONS}
     tables = article_tables(summary, rows)
     summary["article_tables"] = tables
     for name, t in tables.items():
@@ -488,6 +509,10 @@ def markdown(s: dict) -> str:
         x = s["totals"].get(f"ALL.{t}")
         if x:
             L.append(f"| {t} | {x['transliterated_features']} | {x['transliterated_score'] if x['transliterated_score'] is not None else '—'} |")
+    if s.get("unaligned_english"):
+        L += ["", "English with no aligned source sentence (judged together with the preceding group):", ""]
+        for t, v in s["unaligned_english"].items():
+            L.append(f"- {t}: {v['pieces']} pieces, {v['words']} words")
     L += ["", "## Validity of the instrument", ""]
     if "judge_agreement" in s:
         L += ["Agreement between judges (Krippendorff's α, nominal):", "", "| Class | n | α | exact agreement |", "|---|---|---|---|"]
@@ -506,8 +531,11 @@ def markdown(s: dict) -> str:
         for k in KINDS:
             cells = [v["detection"].get(f"{t}.{k}", {}).get("rate") for t in TRANSLATIONS]
             L.append(f"| {k} | " + " | ".join("—" if c is None else f"{c:.2f}" for c in cells) +
-                     f" | {v['by_kind'][k]['rate']} |")
-        L += ["", f"Collateral changes on untouched features: {v['collateral_change_rate']['rate']}", ""]
+                     f" | {v['by_kind'][k]['rate']} (false alarms {v['by_kind'][k]['false_alarm_rate']}) |")
+        L += ["", "Sensitivity = planted error detected; false alarms = the same verdict on the identical "
+                  "unperturbed control, judged in the same run.",
+              f"Changes on untouched features between perturbed text and its control: "
+              f"{v['collateral_change_rate']['rate']}", ""]
     if s.get("rule_crosscheck"):
         L += ["Rule cross-checks (agreement of judge with a deterministic rule):", ""]
         for k, v in s["rule_crosscheck"].items():
