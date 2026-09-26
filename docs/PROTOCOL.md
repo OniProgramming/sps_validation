@@ -265,6 +265,21 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v0.8 (second external review, before any paid run):
+  - The planted-error tests are scored on **both** dimensions, so *source preserved* has its
+    own sensitivity and false-alarm figures. Agreement between judges shows consistency for
+    both dimensions, not correctness.
+  - Note for the article: in *source preserved*, a transliteration preserves the identity of
+    the source word (formal correspondence). That alone does not show that the contextual
+    sense is preserved, which is what *sense conveyed* measures. The two dimensions must be
+    read together.
+  - Planted errors: no past → future shift after an auxiliary ("had left"); correct
+    irregular plurals (wife/wives); no number flip on participles or adjectives.
+  - אֱלֹהִים: whether its plural counts as number is decided by the SDBH sense ("gods",
+    000397001001000), no longer by an English gloss. No gloss now influences the feature
+    inventory.
+  - Zero denominators are defined, so no NaN can occur. Accuracy with nothing asserted is 1;
+    fidelity is 0 when retention is 0.
 - v0.7 (two dimensions, fixed before any paid run):
   - Every feature receives two verdicts, both reported with equal weight in all tables:
     - **Sense conveyed**: is the information conveyed to an ordinary reader of the English

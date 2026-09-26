@@ -59,7 +59,11 @@ PREPOSITIONS = {"of", "to", "in", "on", "from", "with", "by", "at", "into", "upo
                 "before", "after", "among", "unto", "toward", "towards", "about", "through", "against",
                 "between", "near", "behind", "beside", "around", "within", "without"}
 IRREGULAR_PLURAL = {"man": "men", "woman": "women", "child": "children", "foot": "feet", "tooth": "teeth",
-                    "ox": "oxen", "mouse": "mice", "goose": "geese", "brother": "brothers"}
+                    "ox": "oxen", "mouse": "mice", "goose": "geese", "brother": "brothers",
+                    "wife": "wives", "life": "lives", "knife": "knives", "loaf": "loaves", "calf": "calves",
+                    "leaf": "leaves", "half": "halves", "thief": "thieves", "sheaf": "sheaves", "wolf": "wolves"}
+AUXILIARIES = {"had", "has", "have", "having", "was", "were", "is", "are", "am", "be", "been", "being", "did",
+               "does", "do", "would", "could", "should", "might", "must", "shall", "will", "may", "can", "to"}
 INVARIANT = {"sheep", "deer", "fish", "cattle", "people", "livestock", "offspring", "seed", "flock", "herd",
              # mass and abstract nouns: a plural would sound wrong, not just mean something else
              "faith", "love", "grace", "peace", "light", "darkness", "water", "bread", "wisdom", "knowledge",
@@ -178,6 +182,9 @@ def perturb(req: dict, kind: str, units, feats, rng: random.Random):
             hit = find_rendering(text, tok)
             if hit and hit[2].lower() in PAST_TO_BASE:
                 s, e, w = hit
+                prev = re.findall(r"[A-Za-z’']+", text[:s])[-2:]
+                if any(p.lower() in AUXILIARIES or p.lower().endswith(("n't", "n’t")) for p in prev):
+                    continue  # "had left", "did not go": not a simple past
                 repl = "will " + PAST_TO_BASE[w.lower()]  # grammatical with any subject
                 repl = repl.capitalize() if w[0].isupper() else repl
                 return text[:s] + repl + text[e:], f["fid"], f"tense_shift: '{w}'→'{repl}'"
@@ -216,13 +223,16 @@ KINDS = ["modifier_drop", "wrong_sense", "number_flip", "negation_drop", "tense_
 
 def inflect_number(word: str) -> str | None:
     """Singular ↔ plural with correct English inflection; None when unsafe."""
-    if word in INVARIANT or word.endswith(("ness", "ity", "tion", "ence", "ance", "ship", "dom", "hood")):
-        return None
+    if word in INVARIANT or word.endswith(("ness", "ity", "tion", "ence", "ance", "ship", "dom", "hood",
+                                           "ed", "ing", "ly", "ful", "ous", "ive", "al")):
+        return None  # abstract nouns, and words that are not nouns at all (participles, adjectives)
     for sg, pl in IRREGULAR_PLURAL.items():
         if word == sg:
             return pl
         if word == pl:
             return sg
+    if word.endswith("ves"):
+        return None  # wives/lives/… are handled by the table above; other -ves words are unsafe
     if word.endswith("ies") and len(word) > 4:
         return word[:-3] + "y"
     if word.endswith(("ches", "shes", "sses", "xes", "zes")):

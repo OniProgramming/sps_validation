@@ -162,8 +162,8 @@ def _pgn(tok: dict) -> str:
 
 # Plural forms without count meaning (plurals of extension, abstraction or
 # majesty; GKC §124, Joüon–Muraoka §136). Their grammatical number is not
-# counted as information. אֱלֹהִים is exempt only when it denotes God (glossed
-# "God"), not "gods".
+# counted as information. אֱלֹהִים is exempt only when it denotes God (SDBH
+# sense), not "gods".
 NO_COUNT_PLURALS = {"שָׁמַיִם", "מַיִם", "פָּנֶה", "פָּנִים", "חַיִּים", "זְקֻנִים", "נְעוּרִים",
                     "מְגוּרִים", "תְּרָפִים"}
 
@@ -172,8 +172,10 @@ def carries_number(tok: dict) -> bool:
     lemma = tok.get("lemma")
     if lemma in NO_COUNT_PLURALS:
         return False
-    if lemma == "אֱלֹהִים":  # the gloss decides God vs gods here only; it is not shown to the judges
-        return (tok.get("gloss") or tok.get("english") or "").lower().startswith("gods")
+    if lemma == "אֱלֹהִים":
+        # Decided by the Semantic Dictionary of Biblical Hebrew, not by a gloss: SDBH sense
+        # 000397001001000 is "gods" (a real plural); the other senses denote God.
+        return (tok.get("sdbh") or "").split()[0:1] == ["000397001001000"]
     return True
 
 

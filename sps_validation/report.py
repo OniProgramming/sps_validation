@@ -106,8 +106,8 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
             U = np.mean([len(a) for a in adds.values()]) * len(fl) / max(n_bead, 1) if adds else 0.0
             D = counts["distorted"]
             R = S / N
-            P = S / (S + D + U) if S + D + U else 0.0
-            F = 2 * P * R / (P + R) if P + R else 0.0
+            P = ratio(S, S + D + U)
+            F = harmonic(P, R)
             u = units[uid]
             rows.append({
                 "book": req["book"], "sentence": uid, "translation": req["translation"],
@@ -127,6 +127,16 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
 
 # --------------------------------------------------------------------------- totals & statistics
 
+def ratio(a: float, b: float) -> float:
+    """Accuracy with nothing asserted (no supported, distorted or added information) is 1:
+    nothing wrong was said. Retention then carries the loss."""
+    return a / b if b else 1.0
+
+
+def harmonic(p: float, r: float) -> float:
+    return 2 * p * r / (p + r) if p + r else 0.0
+
+
 def totals(rows: list[dict]) -> dict:
     out = {}
     for book in ("GEN", "EPH", "ALL"):
@@ -138,11 +148,11 @@ def totals(rows: list[dict]) -> dict:
             N = sum(r["features"] for r in rs)
             D = sum(r["distorted"] for r in rs)
             U = sum(r["unsupported_additions"] for r in rs)
-            R, P = S / N, S / (S + D + U)
+            R, P = S / N, ratio(S, S + D + U)
             ci = bootstrap(rs)
             out[f"{book}.{t}"] = {
                 "sentences": len(rs), "features": N, "retention": round(R, 4), "loss": round(1 - R, 4),
-                "accuracy": round(P, 4), "fidelity": round(2 * P * R / (P + R), 4),
+                "accuracy": round(P, 4), "fidelity": round(harmonic(P, R), 4),
                 "retention_CI95": ci["retention"], "fidelity_CI95": ci["fidelity"],
                 "distorted": round(D, 1), "unsupported_additions": round(U, 1),
                 "by_class": {c: round(sum(r[f"R_{c}"] * r[f"n_{c}"] for r in rs if r[f"n_{c}"]) /
@@ -163,8 +173,9 @@ def bootstrap(rs: list[dict], draws: int = 2000, seed: int = 7) -> dict:
     idx = rng.integers(0, len(rs), size=(draws, len(rs)))
     s, n, d, u = S[idx].sum(1), N[idx].sum(1), D[idx].sum(1), U[idx].sum(1)
     R = s / n
-    P = s / (s + d + u)
-    F = 2 * P * R / (P + R)
+    den = s + d + u
+    P = np.divide(s, den, out=np.ones_like(s, dtype=float), where=den > 0)
+    F = np.divide(2 * P * R, P + R, out=np.zeros_like(R, dtype=float), where=(P + R) > 0)
     q = lambda a: [round(float(np.percentile(a, 2.5)), 4), round(float(np.percentile(a, 97.5)), 4)]
     return {"retention": q(R), "fidelity": q(F)}
 
@@ -240,7 +251,7 @@ def agreement(a: dict, b: dict, requests: list[dict], feats_by_fid: dict, key: s
             for c, p in by_class.items() if p}
 
 
-def perturbation_summary(pert_reqs, pert_res, main_res) -> dict:
+def perturbation_summary(pert_reqs, pert_res, main_res, key: str = "outcome") -> dict:
     """Sensitivity = planted error detected in the perturbed text; false-alarm rate = the
     same "detection" on the identical, unperturbed control judged in the same run.
     Only cases whose original (main run) target was judged retained are counted."""
@@ -264,13 +275,13 @@ def perturbation_summary(pert_reqs, pert_res, main_res) -> dict:
                 alarm = unsupported(ctl) > unsupported(old)
             else:
                 fn, fc, fo = feature_outcomes(new), feature_outcomes(ctl), feature_outcomes(old)
-                if not all(target in x for x in (fn, fc, fo)) or fo[target]["outcome"] != "retained":
+                if not all(target in x and key in x[target] for x in (fn, fc, fo)) or fo[target][key] != "retained":
                     continue
-                hit = SCORE.get(fn[target]["outcome"], 1) < 1
-                alarm = SCORE.get(fc[target]["outcome"], 1) < 1
+                hit = SCORE.get(fn[target][key], 1) < 1
+                alarm = SCORE.get(fc[target][key], 1) < 1
                 for fid in fc:
-                    if fid != target and fid in fn:
-                        collateral[0] += fc[fid]["outcome"] != fn[fid]["outcome"]
+                    if fid != target and fid in fn and key in fc[fid] and key in fn[fid]:
+                        collateral[0] += fc[fid][key] != fn[fid][key]
                         collateral[1] += 1
             c = cell[(q["translation"], kind)]
             c[0] += hit
@@ -385,7 +396,8 @@ def build(root: Path, out: Path, label: str) -> dict:
         for d, k in DIMENSIONS.items()}
     pert = load_results(root, "perturb")
     if pert:
-        summary["perturbation"] = perturbation_summary(_jsonl(OUT / "sets" / "perturb.jsonl"), pert, main)
+        summary["perturbation"] = {d: perturbation_summary(_jsonl(OUT / "sets" / "perturb.jsonl"), pert, main, k)
+                                   for d, k in DIMENSIONS.items()}
     summary["rule_crosscheck"] = rule_crosscheck(main_reqs, main, units, feats)
     summary["unaligned_english"] = {
         t: {"pieces": sum(len(r.get("unaligned_english", [])) for r in main_reqs if r["translation"] == t),
@@ -566,17 +578,18 @@ def markdown(s: dict) -> str:
             if v:
                 L.append(f"- {j}: α = {v['alpha']}, exact agreement = {v['exact_agreement']} (n = {v['n']})")
         L.append("")
-    for j, v in s.get("perturbation", {}).items():
-        L += [f"Known-answer tests — {j} (sense dimension; detection rate of planted errors):", "",
-              "| Error | " + " | ".join(TRANSLATIONS) + " | all |", "|---|" + "---|" * (len(TRANSLATIONS) + 1)]
-        for k in KINDS:
-            cells = [v["detection"].get(f"{t}.{k}", {}).get("rate") for t in TRANSLATIONS]
-            L.append(f"| {k} | " + " | ".join("—" if c is None else f"{c:.2f}" for c in cells) +
-                     f" | {v['by_kind'][k]['rate']} (false alarms {v['by_kind'][k]['false_alarm_rate']}) |")
-        L += ["", "Sensitivity = planted error detected; false alarms = the same verdict on the identical "
-                  "unperturbed control, judged in the same run.",
-              f"Changes on untouched features between perturbed text and its control: "
-              f"{v['collateral_change_rate']['rate']}", ""]
+    for d, per in s.get("perturbation", {}).items():
+        for j, v in per.items():
+            L += [f"Known-answer tests — {j}, {DIM_LABEL[d]} (detection rate of planted errors):", "",
+                  "| Error | " + " | ".join(TRANSLATIONS) + " | all |", "|---|" + "---|" * (len(TRANSLATIONS) + 1)]
+            for k in KINDS:
+                cells = [v["detection"].get(f"{t}.{k}", {}).get("rate") for t in TRANSLATIONS]
+                L.append(f"| {k} | " + " | ".join("—" if c is None else f"{c:.2f}" for c in cells) +
+                         f" | {v['by_kind'][k]['rate']} (false alarms {v['by_kind'][k]['false_alarm_rate']}) |")
+            L += ["", "Sensitivity = planted error detected; false alarms = the same verdict on the identical "
+                      "unperturbed control, judged in the same run.",
+                  f"Changes on untouched features between perturbed text and its control: "
+                  f"{v['collateral_change_rate']['rate']}", ""]
     if s.get("rule_crosscheck"):
         L += ["Rule cross-checks (sense dimension; agreement of judge with a deterministic rule):", ""]
         for k, v in s["rule_crosscheck"].items():

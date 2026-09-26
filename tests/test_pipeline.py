@@ -74,8 +74,8 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(classes, ["LEX", "ASP", "STEM", "REF"])
 
     def test_plural_of_majesty_carries_no_number(self):
-        self.assertFalse(carries_number({"lemma": "אֱלֹהִים", "gloss": "God"}))
-        self.assertTrue(carries_number({"lemma": "אֱלֹהִים", "gloss": "gods"}))
+        self.assertFalse(carries_number({"lemma": "אֱלֹהִים", "sdbh": "000397001003000", "gloss": "gods"}))
+        self.assertTrue(carries_number({"lemma": "אֱלֹהִים", "sdbh": "000397001001000", "gloss": "God"}))
         self.assertFalse(carries_number({"lemma": "מַיִם"}))
 
 
@@ -158,6 +158,42 @@ class ScoringTest(unittest.TestCase):
         two = sentence_rows([req], {"claude": {"r": ok}, "gpt": {"r": {"result": {"status": "refusal"}}}}, units, feats)[0]
         self.assertEqual(one["fidelity"], two["fidelity"])
         self.assertEqual(two["distorted"], 1.0)
+
+
+class ZeroDenominatorTest(unittest.TestCase):
+    def test_everything_lost_gives_numbers_not_nan(self):
+        import math
+        from sps_validation.report import totals
+        units = {"U": {"text": "x", "tokens": []}}
+        feats = {"U": [{"fid": "U/1", "class": "LEX"}]}
+        req = {"id": "r", "book": "GEN", "translation": "WEB", "units": ["U"], "english": "e", "fids": ["U/1"]}
+        res = {"result": {"status": "ok", "additions": [], "features": [{"fid": "U/1", "outcome": "lost"}]}}
+        rows = sentence_rows([req], {"claude": {"r": res}}, units, feats)
+        t = totals(rows)["GEN.WEB"]
+        for k in ("retention", "accuracy", "fidelity"):
+            self.assertFalse(math.isnan(t[k]), k)
+        self.assertEqual(t["fidelity"], 0.0)
+        self.assertFalse(any(math.isnan(v) for v in t["fidelity_CI95"] + t["retention_CI95"]))
+
+
+class PerturbationGrammarTest(unittest.TestCase):
+    def test_inflection(self):
+        from sps_validation.validate import inflect_number
+        self.assertEqual(inflect_number("wives"), "wife")
+        self.assertEqual(inflect_number("wife"), "wives")
+        self.assertEqual(inflect_number("sons"), "son")
+        self.assertIsNone(inflect_number("sheep"))
+        self.assertIsNone(inflect_number("shelves"))
+        self.assertIsNone(inflect_number("promised"))
+
+    def test_tense_shift_skips_auxiliary_forms(self):
+        import random
+        units = {"U": {"tokens": [{"id": "v", "class": "verb", "type": "qatal", "english": "left", "gloss": "left"}]}}
+        feats = {"U": [{"fid": "U/1", "token": "v", "class": "ASP", "value": "qatal"}]}
+        self.assertIsNone(perturb({"units": ["U"], "english": "They had left."}, "tense_shift", units, feats,
+                                  random.Random(0)))
+        new, fid, _ = perturb({"units": ["U"], "english": "They left."}, "tense_shift", units, feats, random.Random(0))
+        self.assertEqual(new, "They will leave.")
 
 
 class PerturbationTest(unittest.TestCase):
