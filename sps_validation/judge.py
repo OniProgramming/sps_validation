@@ -90,9 +90,9 @@ Rules for SENSE CONVEYED (outcome):
 11. Conjunctions and other REL features are retained when the relation they express (addition, sequence, contrast, cause, purpose, condition…) is conveyed, whether by a word, by clause order, or by sentence structure.
 
 Rules for SOURCE PRESERVED (source_outcome):
-12. LEX: retained when the English keeps the source word's own sense (a literal equivalent or a transliteration of that word); partial when only the sense of a larger expression is kept (e.g. "before" for לִפְנֵי "to the face of"); lost when the word leaves no trace.
-13. Grammatical distinctions (aspect, stem, voice, mood, person, gender, number, definiteness): retained only when the text itself marks the distinction (by an English form, word, transliterated form or marker); partial when it is recoverable only from context; lost when it is not recoverable.
-14. REL and ARG: retained when the relation is marked in the text as in the source (a conjunction rendered as a conjunction, a construct/genitive relation marked as such); partial when it is recoverable only from clause order or context.
+12. The question is whether the text keeps a direct counterpart of the source item, not whether it shows the Hebrew or Greek form. A standard English equivalent that directly renders the source word or form preserves it: "God" for אֵל, "went" (simple past) for a narrative wayyiqtol, "his" for a 3ms suffix, "and" for וְ, "of" for a construct relation. A transliteration preserves it too.
+13. retained: the item has its own direct counterpart in the text. partial: the item survives only indirectly — merged into another word or phrase, turned into a different word class or construction, its literal sense or image replaced by the meaning of a larger expression (e.g. "before" for לִפְנֵי "to the face of"), or recoverable only from context. lost: no counterpart in the text. distorted: the counterpart says something different.
+14. Distinctions English grammar cannot mark at all (the gender of "you" and "they", Hebrew conjugation classes, the Greek middle when English has no corresponding form) are retained when the text uses the English category that directly corresponds (e.g. "they" for 3mp, a past tense for a narrative past); they are not penalised for what English cannot express.
 
 ## Additions
 List English content that corresponds to no source word in SOURCE, classified as:
@@ -423,7 +423,7 @@ def pilot_report() -> Path:
     units, feats = load_sources()
     by_fid = {f["fid"]: f for fl in feats.values() for f in fl}
     toks = {t["id"]: t for u in units.values() for t in u["tokens"]}
-    agree = total = 0
+    agree = total = agree_sense = agree_source = 0
     colour = {"retained": "#1b7f3b", "partial": "#a36b00", "lost": "#b3261e", "distorted": "#7b1fa2",
               "not_in_base": "#666"}
     rows = []
@@ -456,6 +456,8 @@ def pilot_report() -> Path:
             if len(vals) == 2:
                 total += 1
                 agree += vals[0] == vals[1]
+                agree_sense += vals[0][0] == vals[1][0]
+                agree_source += vals[0][1] == vals[1][1]
             word = toks.get(f["token"], {}).get("text", "")
             rows.append(f"<tr><td class=heb>{html.escape(word)}</td><td>{f['class']}: {html.escape(f['value'])}</td>"
                         + "".join(cells) + "</tr>")
@@ -465,8 +467,10 @@ def pilot_report() -> Path:
                 rows.append(f"<p><b>{j} — additions:</b> " + "; ".join(
                     f"{html.escape(x['type'])}: «{html.escape(x['english'])}»" for x in a) + "</p>")
         rows.append("</section>")
-    head = (f"<p>{len(ids)} pilot sentences. Same pair of verdicts (sense, source) from both judges: "
-            f"<b>{agree}/{total} ({100 * agree / max(total, 1):.0f}%)</b> of information items.</p>") if total else ""
+    head = (f"<p>{len(ids)} pilot sentences, {total} information items. Same verdict from both judges — "
+            f"sense conveyed: <b>{100 * agree_sense / max(total, 1):.0f}%</b>, "
+            f"source preserved: <b>{100 * agree_source / max(total, 1):.0f}%</b>, "
+            f"both: <b>{100 * agree / max(total, 1):.0f}%</b>.</p>") if total else ""
     page = ("<!doctype html><meta charset=utf-8><title>Pilot judgements</title><style>"
             "body{font-family:system-ui,sans-serif;max-width:1100px;margin:auto;padding:16px;line-height:1.4}"
             "table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px;vertical-align:top}"

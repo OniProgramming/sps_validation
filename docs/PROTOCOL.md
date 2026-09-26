@@ -265,6 +265,15 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v1.0 (after pilot 2: 10 requests × 2 judges; agreement sense 87.8%, source 57.7%):
+  - The source-preserved rules were ambiguous: one judge required the Hebrew/Greek *form*
+    to be visible and scored standard English equivalents ("God" for אֵל, "went" for
+    wayyiqtol) as partial. The rules now state that a direct counterpart (a standard English
+    equivalent, or a transliteration) preserves the item. Partial is reserved for items that
+    survive only indirectly (merged, restructured, image replaced, context only).
+    Distinctions English grammar cannot mark are not penalised when the directly
+    corresponding English category is used. The change applies identically to all
+    translations.
 - v0.9 (third review; final before the pilot):
   - The planted-error generator keeps only edits that stay grammatical by construction:
     - a noun is changed only where nothing later in its clause agrees with it (it is
