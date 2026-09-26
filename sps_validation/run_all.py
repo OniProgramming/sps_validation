@@ -56,6 +56,10 @@ def main(argv: list[str]) -> None:
     if answer != "yes":
         print("Stopped. Nothing was spent.")
         return
+    # submit everything first, so all six batches are processed in parallel, then collect
+    for judge in ("claude", "gpt"):
+        for s in SETS:
+            step(["sps_validation.judge", "submit", judge, s])
     for judge in ("claude", "gpt"):
         for s in SETS:
             step(["sps_validation.judge", "run", judge, s])

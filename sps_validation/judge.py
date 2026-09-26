@@ -482,10 +482,14 @@ def pilot_report() -> Path:
     return path
 
 
-def run(judge_name: str, set_name: str) -> None:
-    """Submit (unless already submitted), wait, collect; retry failed items once synchronously."""
+def submit_only(judge_name: str, set_name: str) -> None:
+    """Submit a set as batches (unless already submitted) and return without waiting."""
     judge = get_judge(judge_name)
     reqs = {r["id"]: r for r in _jsonl(OUT / "sets" / f"{set_name}.jsonl")}
+    _batches(judge, judge_name, set_name, reqs)
+
+
+def _batches(judge, judge_name: str, set_name: str, reqs: dict) -> list[str]:
     state_path = OUT / "state" / f"{judge_name}.{set_name}.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     fp = fingerprint(judge, reqs)
@@ -495,12 +499,20 @@ def run(judge_name: str, set_name: str) -> None:
             raise SystemExit(
                 f"{state_path} belongs to a different experiment (model, instructions or requests changed).\n"
                 f"Its batches are not reused. Delete that file to start a new run of '{set_name}' with {judge.model}.")
-        batch_ids = state["batches"]
-        print(f"resuming {len(batch_ids)} submitted batch(es) of the same experiment", flush=True)
-    else:
-        batch_ids = judge.submit(list(reqs.values()))
-        state_path.write_text(json.dumps({"fingerprint": fp, "model": judge.model, "set": set_name,
-                                          "batches": batch_ids}), encoding="utf-8")
+        print(f"{judge_name}/{set_name}: {len(state['batches'])} batch(es) already submitted", flush=True)
+        return state["batches"]
+    batch_ids = judge.submit(list(reqs.values()))
+    state_path.write_text(json.dumps({"fingerprint": fp, "model": judge.model, "set": set_name,
+                                      "batches": batch_ids}), encoding="utf-8")
+    return batch_ids
+
+
+def run(judge_name: str, set_name: str) -> None:
+    """Submit (unless already submitted), wait, collect; retry failed items once synchronously."""
+    judge = get_judge(judge_name)
+    reqs = {r["id"]: r for r in _jsonl(OUT / "sets" / f"{set_name}.jsonl")}
+    batch_ids = _batches(judge, judge_name, set_name, reqs)
+    print(f"{judge_name}/{set_name}: waiting for the batches (usually minutes to a few hours)…", flush=True)
     while not all(judge.done(b) for b in batch_ids):
         time.sleep(60)
     fids = {i: r["fids"] for i, r in reqs.items()}
@@ -547,6 +559,8 @@ def main(argv: list[str]) -> None:
         pilot_report()
     elif cmd == "pilot":
         pilot(argv[2], int(argv[3]) if len(argv) > 3 else 5)
+    elif cmd == "submit":
+        submit_only(argv[2], argv[3] if len(argv) > 3 else "main")
     elif cmd == "run":
         run(argv[2], argv[3] if len(argv) > 3 else "main")
 

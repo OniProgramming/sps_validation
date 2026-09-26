@@ -265,6 +265,12 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v1.1 (after pilot 3: agreement sense 88%, source 67%; frozen for the full run):
+  - *Sense conveyed* is the primary dimension. *Source preserved* is reported as a secondary
+    dimension. Its lower inter-judge agreement in the pilot (67%) is stated as a limitation,
+    and its results are interpreted with that in mind.
+  - Budget US$16 per judge: 425 randomly sampled Genesis sentences + all 78 Ephesians
+    sentences, in all four translations.
 - v1.0 (after pilot 2: 10 requests × 2 judges; agreement sense 87.8%, source 57.7%):
   - The source-preserved rules were ambiguous: one judge required the Hebrew/Greek *form*
     to be visible and scored standard English equivalents ("God" for אֵל, "went" for
