@@ -3,7 +3,7 @@
     python -m sps_validation.run_all --pilot    # prepare + 10 trial requests per judge + cost plan (cents)
     python -m sps_validation.run_all --judge    # prepare + sample sized to the budget + both judges + report
 
-Options: --budget 12 (US$ per account, default 12), --fresh (redo the preparation).
+Options: --budget 16 (US$ per account, default 16), --fresh (redo the preparation).
 The paid steps need ANTHROPIC_API_KEY and OPENAI_API_KEY. Before the full run
 the estimated cost is shown and nothing is spent until you type yes. Judge
 runs are resumable: an interrupted run picks up its submitted batches.
@@ -34,7 +34,7 @@ def step(args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> None:
-    budget = argv[argv.index("--budget") + 1] if "--budget" in argv else "12"
+    budget = argv[argv.index("--budget") + 1] if "--budget" in argv else "16"
     if "--fresh" in argv or not Path("build/judge/sets/all.jsonl").exists():
         for a in PREP:
             step(a)

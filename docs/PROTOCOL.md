@@ -265,6 +265,16 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v0.9 (third review; final before the pilot):
+  - The planted-error generator keeps only edits that stay grammatical by construction:
+    - a noun is changed only where nothing later in its clause agrees with it (it is
+      followed by punctuation, the end, or a preposition/conjunction), and never when it
+      has an irregular plural form (children, men…);
+    - the tense shift applies only to a simple past in a main clause: no auxiliary, negation
+      or subordinator ("when", "that", "who"…) earlier in the clause.
+    Unsafe cases are excluded rather than repaired.
+  - Budget per judge: US$16. The sample is sized with a 10% safety margin over the
+    pilot's measured cost per request.
 - v0.8 (second external review, before any paid run):
   - The planted-error tests are scored on **both** dimensions, so *source preserved* has its
     own sensitivity and false-alarm figures. Agreement between judges shows consistency for

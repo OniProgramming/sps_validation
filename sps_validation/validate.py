@@ -62,6 +62,8 @@ IRREGULAR_PLURAL = {"man": "men", "woman": "women", "child": "children", "foot":
                     "ox": "oxen", "mouse": "mice", "goose": "geese", "brother": "brothers",
                     "wife": "wives", "life": "lives", "knife": "knives", "loaf": "loaves", "calf": "calves",
                     "leaf": "leaves", "half": "halves", "thief": "thieves", "sheaf": "sheaves", "wolf": "wolves"}
+SUBORDINATORS = {"when", "if", "after", "before", "until", "till", "while", "as", "once", "whenever",
+                 "because", "since", "that", "who", "whom", "which", "where", "though", "although", "unless"}
 AUXILIARIES = {"had", "has", "have", "having", "was", "were", "is", "are", "am", "be", "been", "being", "did",
                "does", "do", "would", "could", "should", "might", "must", "shall", "will", "may", "can", "to"}
 INVARIANT = {"sheep", "deer", "fish", "cattle", "people", "livestock", "offspring", "seed", "flock", "herd",
@@ -72,6 +74,22 @@ INVARIANT = {"sheep", "deer", "fish", "cattle", "people", "livestock", "offsprin
              "power", "mercy", "counsel", "hope", "joy", "fear", "anger", "understanding", "favor", "favour"}
 NEGATORS = re.compile(r"\b(not|never)\b\s*|n[’']t\b", re.IGNORECASE)
 CONTRACTIONS = {"won’t": "will", "won't": "will", "can’t": "can", "can't": "can"}
+
+
+# A noun may be edited only where nothing later in the sentence agrees with it:
+# it must be followed by punctuation, the end, or a word that starts a new phrase.
+SAFE_AFTER = {"and", "or", "but", "of", "in", "to", "from", "with", "for", "at", "by", "on", "into",
+              "upon", "over", "under", "before", "after", "among", "unto", "toward", "towards", "through"}
+IRREGULAR_PLURAL_FORMS = {"children", "men", "women", "people", "feet", "teeth", "oxen", "geese", "mice",
+                          "cattle", "sheep", "deer", "fish", "brethren", "kine", "swine"}
+
+
+def safe_noun_slot(text: str, s: int, e: int) -> bool:
+    after = text[e:]
+    if re.match(r"\s*([.,;:!?”’\"')\]—–]|$)", after):
+        return True
+    nxt = re.match(r"\s+([A-Za-z]+)", after)
+    return bool(nxt) and nxt.group(1).lower() in SAFE_AFTER
 
 
 def english_words(text: str):
@@ -140,6 +158,8 @@ def perturb(req: dict, kind: str, units, feats, rng: random.Random):
             if not hit or not hit[2].islower():
                 continue
             s, e, w = hit
+            if w.lower() in IRREGULAR_PLURAL_FORMS or not safe_noun_slot(text, s, e):
+                continue  # "The children are" → "The anchor are" would break agreement
             article = re.search(r"\b(a|an)\s+$", text[:s], re.I)
             options = [x for x in UNRELATED if x not in text and
                        (not article or (article.group(1).lower() == "an") == (x[0] in "aeiou"))]
@@ -161,6 +181,8 @@ def perturb(req: dict, kind: str, units, feats, rng: random.Random):
             if len(prev) < 2 or prev[0].lower() not in PREPOSITIONS or prev[1].lower() not in NUMBER_NEUTRAL \
                     or not w.islower():
                 continue  # only "of the sons", "to his father": a prepositional object governs no verb
+            if not safe_noun_slot(text, s, e):
+                continue  # "to the man who was" → "to the men who was" would break agreement
             repl = inflect_number(w)
             if repl:
                 return text[:s] + repl + text[e:], f["fid"], f"number_flip: '{w}'→'{repl}'"
@@ -182,9 +204,12 @@ def perturb(req: dict, kind: str, units, feats, rng: random.Random):
             hit = find_rendering(text, tok)
             if hit and hit[2].lower() in PAST_TO_BASE:
                 s, e, w = hit
-                prev = re.findall(r"[A-Za-z’']+", text[:s])[-2:]
-                if any(p.lower() in AUXILIARIES or p.lower().endswith(("n't", "n’t")) for p in prev):
-                    continue  # "had left", "did not go": not a simple past
+                clause = re.split(r"[.,;:!?—–“”\"]", text[:s])[-1]  # the verb's own clause, up to the verb
+                words = [x.lower() for x in re.findall(r"[A-Za-z’']+", clause)]
+                if any(x in AUXILIARIES or x.endswith(("n't", "n’t")) for x in words):
+                    continue  # "had (already quietly) left", "did not go", "to …": not a simple past
+                if any(x in SUBORDINATORS for x in words):
+                    continue  # "when his master saw" → "when … will see" is not idiomatic English
                 repl = "will " + PAST_TO_BASE[w.lower()]  # grammatical with any subject
                 repl = repl.capitalize() if w[0].isupper() else repl
                 return text[:s] + repl + text[e:], f["fid"], f"tense_shift: '{w}'→'{repl}'"

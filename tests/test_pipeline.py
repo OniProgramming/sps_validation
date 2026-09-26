@@ -196,6 +196,30 @@ class PerturbationGrammarTest(unittest.TestCase):
         self.assertEqual(new, "They will leave.")
 
 
+class PerturbationSafetyTest(unittest.TestCase):
+    """The three cases from the second review must not be produced."""
+
+    def _run(self, kind, english, tok, cls):
+        import random
+        units = {"U": {"tokens": [dict(tok, id="t")]}}
+        feats = {"U": [{"fid": "U/1", "token": "t", "class": cls, "value": ""}]}
+        return perturb({"units": ["U"], "english": english}, kind, units, feats, random.Random(0))
+
+    def test_no_agreement_breaks(self):
+        noun = {"class": "noun", "type": "common", "english": "children", "gloss": "children"}
+        self.assertIsNone(self._run("wrong_sense", "The children are here.", noun, "LEX"))
+        man = {"class": "noun", "type": "common", "english": "man", "gloss": "man"}
+        self.assertIsNone(self._run("number_flip", "He spoke to the man who was here.", man, "NUM"))
+        left = {"class": "verb", "type": "qatal", "english": "left", "gloss": "left"}
+        self.assertIsNone(self._run("tense_shift", "They had already quietly left.", left, "ASP"))
+        self.assertIsNone(self._run("tense_shift", "When they left, it rained.", left, "ASP"))
+
+    def test_safe_edits_still_happen(self):
+        man = {"class": "noun", "type": "common", "english": "man", "gloss": "man"}
+        new, _, _ = self._run("number_flip", "He spoke to the man.", man, "NUM")
+        self.assertEqual(new, "He spoke to the men.")
+
+
 class PerturbationTest(unittest.TestCase):
     def test_negation_drop_targets_the_neg_feature(self):
         import random

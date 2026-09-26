@@ -5,8 +5,8 @@ with config/prices.json at batch rates. The largest Genesis sample whose total
 cost (main + retest + planted errors) stays within the budget for *both* judges
 is drawn with a fixed seed, so the sample is reproducible and not chosen by hand.
 
-    python -m sps_validation.plan estimate [--budget 12]   # print the plan, write nothing
-    python -m sps_validation.plan write    [--budget 12]   # write sets main / retest / perturb
+    python -m sps_validation.plan estimate [--budget 16]   # print the plan, write nothing
+    python -m sps_validation.plan write    [--budget 16]   # write sets main / retest / perturb
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from .judge import JUDGES, OUT, _jsonl, write_set
 from .validate import KINDS, build_perturbations, build_retest
 
 SEED = 20260925
+SAFETY = 1.10  # plan with a 10% margin over the pilot's measured cost per request
 PER_CELL = 10  # planted errors per translation × error type (4 × 6 × 10 = 240, + 240 controls)
 STEP = 25
 
@@ -61,7 +62,7 @@ def plan(budget: float) -> dict:
         sample = set(order[:n])
         main = main_set(all_reqs, sample)
         total = len(main) + round(0.10 * len(main)) + extra
-        cost = {j: total * c for j, c in price.items()}
+        cost = {j: total * c * SAFETY for j, c in price.items()}
         if all(v <= budget for v in cost.values()):
             best = {"n": min(n, len(order)), "requests_main": len(main), "requests_total": total,
                     "cost": {j: round(v, 2) for j, v in cost.items()}}
@@ -93,13 +94,13 @@ def describe(p: dict) -> str:
     return (f"Plan: {p['n']} randomly chosen Genesis sentences (of 4,220) + all 78 Ephesians sentences, "
             f"in all 4 translations.\n"
             f"Requests per judge: {p['requests_total']} (main {p['requests_main']}, 10% repeat, 240 planted errors + 240 controls).\n"
-            + "\n".join(f"Estimated cost {j} ({p['models'][j]}): ${p['cost'][j]:.2f}  "
+            + "\n".join(f"Estimated cost {j} ({p['models'][j]}), incl. 10% margin: ${p['cost'][j]:.2f}  "
                         f"(${p['per_request'][j]:.4f} per request)" for j in p["cost"])
             + f"\nBudget per account: ${p['budget_per_judge']:.2f}")
 
 
 def main(argv: list[str]) -> None:
-    budget = float(argv[argv.index("--budget") + 1]) if "--budget" in argv else 12.0
+    budget = float(argv[argv.index("--budget") + 1]) if "--budget" in argv else 16.0
     cmd = argv[1] if len(argv) > 1 and not argv[1].startswith("--") else "estimate"
     p = write(budget) if cmd == "write" else plan(budget)
     print(describe(p))
