@@ -270,6 +270,24 @@ class AblationBaselineTest(unittest.TestCase):
         self.assertTrue(gemba_span_hit(rec("heavenly"), p, e["perturbed"], e["removed"]))  # names the deleted word
         self.assertTrue(gemba_span_hit(rec("places"), p, e["perturbed"]))                  # on the edited words
         self.assertFalse(gemba_span_hit(rec("in"), p, e["perturbed"], e["removed"]))
+    def test_neutral_edit(self):
+        from sps_validation.baselines import neutral_edit
+        self.assertEqual(neutral_edit("Do not be afraid."), ("Don't be afraid.", "contraction"))
+        self.assertEqual(neutral_edit("I can’t go"), ("I cannot go", "contraction"))
+        self.assertEqual(neutral_edit("he walked toward the city"), ("he walked towards the city", "spelling"))
+        self.assertEqual(neutral_edit("they honored him"), ("they honoured him", "spelling"))
+        self.assertEqual(neutral_edit("He said, “Come.”"), ('He said, "Come."', "quotes"))
+        self.assertIsNone(neutral_edit("it's a day"))        # 's is ambiguous (is / has): never touched
+        self.assertIsNone(neutral_edit("the laborious work"))  # not a spelling variant
+
+    def test_calibration_threshold(self):
+        from sps_validation.baselines import calibration
+        nulls = [0.0] * 37 + [0.1, 0.2, 0.3]  # 3 of 40 null drops above 0 (7.5%), 2 above 0.1 (5%)
+        rec = [{"kind": "addition", "delta": d, "null_delta": n} for d, n in zip([0.5] * 20 + [0.05] * 20, nulls)]
+        row = calibration({"m": rec}, {})[0]
+        self.assertEqual(row["tau"], 0.1)
+        self.assertEqual(row["null_false_alarm"], 0.05)
+        self.assertEqual(row["addition"], 0.5)  # only the drops of 0.5 exceed τ
 
 
 if __name__ == "__main__":

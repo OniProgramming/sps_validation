@@ -80,6 +80,52 @@ def _read(path: Path) -> list[dict]:
     return _jsonl(path) if path.exists() else []
 
 
+
+# --------------------------------------------------------------------------- meaning-preserving controls
+
+# Edits that leave the meaning unchanged, so that a score drop on them is a false alarm. Only
+# unambiguous ones: no 's/'ve contractions (it's = it is / it has; I've a son), no "let us"
+# (= allow us), no change that could alter a word's sense.
+CONTRACT = {"do not": "don't", "does not": "doesn't", "did not": "didn't", "is not": "isn't", "are not": "aren't",
+            "was not": "wasn't", "were not": "weren't", "will not": "won't", "cannot": "can't",
+            "have not": "haven't", "has not": "hasn't", "had not": "hadn't", "would not": "wouldn't",
+            "should not": "shouldn't", "could not": "couldn't", "I am": "I'm", "you are": "you're",
+            "we are": "we're", "they are": "they're", "I will": "I'll", "you will": "you'll", "we will": "we'll",
+            "they will": "they'll", "he will": "he'll", "she will": "she'll"}
+EXPAND = {v: k for k, v in CONTRACT.items()}
+SPELLING = {"toward": "towards", "afterward": "afterwards", "among": "amongst", "honor": "honour", "favor": "favour",
+            "neighbor": "neighbour", "labor": "labour", "color": "colour", "gray": "grey", "savior": "saviour",
+            "plow": "plough", "jewelry": "jewellery"}
+SPELLING |= {v: k for k, v in list(SPELLING.items())}
+SPELL_SUFFIX = r"(s|ed|ing|able|ably|er|ers|hood|ful)?"
+NEUTRAL_PER_TRANSLATION = None  # equalised to the smallest eligible count (see export)
+
+
+def _match_case(src: str, repl: str) -> str:
+    return repl[0].upper() + repl[1:] if src[:1].isupper() else repl
+
+
+def neutral_edit(text: str) -> tuple[str, str] | None:
+    """One meaning-preserving edit (first applicable, in a fixed order): contraction ↔ full form,
+    US ↔ UK spelling, curly → straight quotation marks. Returns (new text, kind) or None."""
+    for full, short in CONTRACT.items():
+        m = re.search(r"\b" + re.escape(full) + r"\b", text, re.I)
+        if m:
+            return text[:m.start()] + _match_case(m.group(0), short) + text[m.end():], "contraction"
+    for short, full in EXPAND.items():
+        for form in (short, short.replace("'", "’")):
+            m = re.search(r"(?<![\w’'])" + re.escape(form) + r"(?![\w’'])", text, re.I)
+            if m:
+                return text[:m.start()] + _match_case(m.group(0), full) + text[m.end():], "contraction"
+    for a, b in SPELLING.items():
+        m = re.search(r"\b" + a + SPELL_SUFFIX + r"\b", text, re.I)
+        if m:
+            return text[:m.start()] + _match_case(m.group(0), b) + (m.group(1) or "") + text[m.end():], "spelling"
+    if re.search("[“”‘’]", text):
+        return text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'"), "quotes"
+    return None
+
+
 # --------------------------------------------------------------------------- 1. export
 
 def source_text(req: dict, units: dict) -> str:
@@ -153,20 +199,45 @@ def export() -> None:
                       "change": q["perturbation"]["change"], "edit": edit_region(c["english"], q["english"])})
     for r in main.values():  # the main set is the judged sample (sampled Genesis + all of Ephesians)
         item(r, "segment")
+    # meaning-preserving variants of the controls: the same number per translation, chosen with a fixed seed
+    eligible = defaultdict(list)
+    for p in pairs:
+        c = by_id[p["control"]]
+        e = neutral_edit(c["english"])
+        if e:
+            eligible[p["translation"]].append((c, e))
+    n_each = min((len(v) for v in eligible.values()), default=0)
+    neutral = []
+    rng = random.Random(20261006)
+    for t in sorted(eligible):
+        for c, (new, kind) in sorted(rng.sample(eligible[t], n_each), key=lambda x: x[0]["id"]):
+            key = "n" + c["id"]
+            items[key] = {"key": key, "role": "neutral", "translation": t, "book": c["book"], "units": c["units"],
+                          "src": source_text(c, units), "mt": new}
+            neutral.append({"neutral": key, "control": c["id"], "translation": t, "book": c["book"], "kind": kind,
+                            "edit": edit_region(c["english"], new)})
     _write_jsonl(BASE / "items.jsonl", items.values())
     _write_jsonl(BASE / "pairs.jsonl", pairs)
+    _write_jsonl(BASE / "neutral.jsonl", neutral)
     n = defaultdict(int)
     for i in items.values():
         n[i["role"]] += 1
-    print(f"exported {len(pairs)} planted-error pairs and {n['segment']} main segments "
-          f"({len(items)} texts) to {BASE}/")
+    print(f"exported {len(pairs)} planted-error pairs, {n['neutral']} meaning-preserving controls "
+          f"({n_each} per translation) and {n['segment']} main segments ({len(items)} texts) to {BASE}/")
+
+
+def scores_path(method: str, which: str) -> Path:
+    """The meaning-preserving controls go to their own file (<method>.neutral.jsonl), so that adding
+    them later never overwrites the scores already obtained; report merges both."""
+    return BASE / "scores" / (f"{method}.neutral.jsonl" if which == "neutral" else f"{method}.jsonl")
 
 
 def selected(which: str) -> list[dict]:
     items = _read(BASE / "items.jsonl")
     if not items:
         raise SystemExit("run `python -m sps_validation.baselines export` first")
-    roles = {"pairs": ("perturbed", "control"), "segments": ("segment",), "all": ("perturbed", "control", "segment")}
+    roles = {"pairs": ("perturbed", "control"), "segments": ("segment",), "neutral": ("neutral",),
+             "all": ("perturbed", "control", "segment", "neutral")}
     return [i for i in items if i["role"] in roles[which]]
 
 
@@ -181,7 +252,7 @@ def run_comet(name: str, which: str, batch: int, gpus: int | None, model_name: s
         raise SystemExit(f"cannot import COMET ({type(e).__name__}: {e}). "
                          "pip install unbabel-comet; see docs/BASELINES.md")
     model_id = model_name or COMET_MODELS[name]
-    path = BASE / "scores" / f"{name}.jsonl"
+    path = scores_path(name, which)
     done = {r["key"] for r in _read(path)}
     todo = [i for i in selected(which) if i["key"] not in done]
     if not todo:
@@ -265,7 +336,7 @@ def gemba_jobs(which: str) -> list[dict]:
 
 def run_gemba(judge: str, which: str, model: str | None, yes: bool) -> None:
     model = model or JUDGES[judge]
-    path = BASE / "scores" / f"gemba-{judge}.jsonl"
+    path = scores_path(f"gemba-{judge}", which)
     done = {r["key"] for r in _read(path) if r.get("status") == "ok"}
     todo = [j for j in gemba_jobs(which) if j["key"] not in done]
     if not todo:
@@ -409,7 +480,8 @@ def evaluate(pairs: list[dict], items: dict, scores: dict, sate: dict) -> dict:
             ok = None not in (fp, fc)
             out[f"{name(jj)} · sentence fidelity · sense"].append(base | {
                 "delta": fc - fp if ok else None, "detected": fc > fp if ok else None,
-                "alarm": (fo > fc) if ok and fo is not None else None})
+                "alarm": (fo > fc) if ok and fo is not None else None,
+                "null_delta": fo - fc if ok and fo is not None else None})
         for metric in ("cometkiwi", "xcomet", "xcomet-xxl"):
             s = scores.get(metric)
             if not s:
@@ -434,11 +506,82 @@ def evaluate(pairs: list[dict], items: dict, scores: dict, sate: dict) -> dict:
             alarm = (b2["score"] < b["score"]) if ok and b2 and b2.get("status") == "ok" else None
             out[f"{label} · score"].append(base | {
                 "delta": b["score"] - a["score"] if ok else None, "detected": b["score"] > a["score"] if ok else None,
-                "alarm": alarm})
+                "alarm": alarm, "null_delta": b["score"] - b2["score"] if alarm is not None else None})
             deleted = p["edit"]["removed"] if p["kind"] in DELETIONS else None
             hp = gemba_span_hit(a, items[p["pair"]]["mt"], p["edit"]["perturbed"], deleted)
             hc = gemba_span_hit(b, items[p["control"]]["mt"], p["edit"]["control"])
             out[f"{label} · error span"].append(base | {"detected": hp, "alarm": hc})
+    return out
+
+
+def neutral_deltas(neutral: list[dict], scores: dict) -> dict[str, list[dict]]:
+    """Score change on meaning-preserving edits, per method: Δ = control − edited (> 0 = a drop)."""
+    out = {}
+    labels = {"cometkiwi": "COMETKiwi · score", "xcomet": "xCOMET-XL · score", "xcomet-xxl": "xCOMET-XXL · score",
+              "gemba-claude": "GEMBA-MQM Claude · score", "gemba-gpt": "GEMBA-MQM GPT · score"}
+    for m, s in scores.items():
+        rows = []
+        for n in neutral:
+            a, b = s.get(n["control"]), s.get(n["neutral"])
+            if not a or not b or a.get("status", "ok") != "ok" or b.get("status", "ok") != "ok":
+                continue
+            rows.append({"kind": n["kind"], "translation": n["translation"], "delta": a["score"] - b["score"],
+                         "n": n, "rec": b})
+        if rows:
+            out[labels.get(m, m)] = rows
+    return out
+
+
+def calibration(records: dict, neutral_rows: dict, alpha: float = 0.05) -> list[dict]:
+    """Detection at matched specificity. For each score-based method, a score drop Δ counts as a
+    detection only above the threshold τ that at most `alpha` of the null comparisons exceed. Null
+    comparisons are same-meaning texts: meaning-preserving edits (all methods with such scores) and,
+    for methods whose verdicts vary between runs, two judgements of the identical text."""
+    out = []
+    for method, rs in records.items():
+        if not any(r.get("delta") is not None for r in rs):
+            continue
+        null = [r["null_delta"] for r in rs if r.get("null_delta") is not None]
+        null += [x["delta"] for x in neutral_rows.get(method, [])]
+        if len(null) < 20:
+            continue
+        null = np.array(null, dtype=float)
+        cands = sorted({0.0} | {float(v) for v in null if v > 0})
+        tau = next(t for t in cands if np.mean(null > t) <= alpha) if any(np.mean(null > t) <= alpha for t in cands) \
+            else max(cands)
+        row = {"method": method, "tau": round(tau, 4), "null_n": len(null),
+               "null_false_alarm": round(float(np.mean(null > tau)), 3),
+               "null_any_drop": round(float(np.mean(null > 0)), 3),
+               "neutral_n": len(neutral_rows.get(method, [])),
+               "neutral_any_drop": round(float(np.mean([x["delta"] > 0 for x in neutral_rows[method]])), 3)
+               if neutral_rows.get(method) else None}
+        for k in KINDS + ["all"]:
+            d = np.array([r["delta"] for r in rs if r.get("delta") is not None and (k == "all" or r["kind"] == k)])
+            row[k] = round(float(np.mean(d > tau)), 3) if len(d) else None
+        out.append(row)
+    return out
+
+
+def neutral_spans(neutral: list[dict], items: dict, scores: dict) -> list[dict]:
+    """Error spans placed on the edited words of a meaning-preserving edit (false alarms of the
+    localisation). Quote-mark edits touch the whole quotation and are left out."""
+    out = []
+    for m, label in (("xcomet", "xCOMET-XL · error span"), ("xcomet-xxl", "xCOMET-XXL · error span"),
+                     ("gemba-gpt", "GEMBA-MQM GPT · error span"), ("gemba-claude", "GEMBA-MQM Claude · error span")):
+        s = scores.get(m)
+        if not s:
+            continue
+        hits = []
+        for n in neutral:
+            if n["kind"] == "quotes" or n["neutral"] not in s:
+                continue
+            rec = s[n["neutral"]]
+            h = xcomet_span_hit(rec, n["edit"]["perturbed"]) if m.startswith("xcomet") else \
+                gemba_span_hit(rec, items[n["neutral"]]["mt"], n["edit"]["perturbed"])
+            if h is not None:
+                hits.append(h)
+        if hits:
+            out.append({"method": label, "n": len(hits), "false_alarm": round(sum(hits) / len(hits), 3)})
     return out
 
 
@@ -534,10 +677,11 @@ def rankings(items: dict, scores: dict, sate_rows: dict) -> list[dict]:
 
 
 def load_scores(root: Path) -> dict:
-    out = {}
+    """{method: {key: record}}; <method>.jsonl and <method>.neutral.jsonl are merged."""
+    out = defaultdict(dict)
     for path in sorted(root.glob("*.jsonl")):
-        out[path.stem] = _latest(path)
-    return out
+        out[path.name.split(".")[0]].update(_latest(path))
+    return dict(out)
 
 
 def report(mock: bool) -> None:
@@ -557,6 +701,9 @@ def report(mock: bool) -> None:
     scores = load_scores(sroot)
     records = evaluate(pairs, items, scores, sate)
     table = rate_table(records)
+    neutral = _read(BASE / "neutral.jsonl")
+    calib = calibration(records, neutral_deltas(neutral, scores))
+    nspans = neutral_spans(neutral, items, scores)
     ref = "SATE Claude+GPT · targeted · sense"  # SATE as published: both judges combined
     tests = mcnemar(records, ref) if ref in records else []
     units, feats = load_sources()
@@ -565,6 +712,7 @@ def report(mock: bool) -> None:
                  for d, k in DIMENSIONS.items()} if sate["main"] else {}
     ranks = rankings(items, scores, sate_rows)
     res = {"label": label, "methods": list(records), "detection": table, "mcnemar_vs": ref, "mcnemar": tests,
+           "calibrated": calib, "neutral_spans": nspans, "neutral_controls": len(neutral),
            "rankings": ranks, "pairs": len(pairs)}
     out.mkdir(parents=True, exist_ok=True)
     (out / "baselines.json").write_text(json.dumps(res, indent=1, ensure_ascii=False, default=_plain), encoding="utf-8")
@@ -577,6 +725,14 @@ def report(mock: bool) -> None:
             a = r["all"]
             w.writerow([r["method"]] + [r[k]["rate"] for k in KINDS] +
                        [a["rate"], a["false_alarm_rate"], a["mean_delta"], a["p_delta_gt_0"], a["n"], r["truncated"]])
+    with (out / "baselines_calibrated.csv").open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["Method"] + [f"{k} detection" for k in KINDS] + ["All: detection", "Threshold τ",
+                                                                     "False alarms at τ", "Null comparisons",
+                                                                     "Neutral edits with any drop"])
+        for r in calib:
+            w.writerow([r["method"]] + [r[k] for k in KINDS] + [r["all"], r["tau"], r["null_false_alarm"], r["null_n"],
+                                                                r["neutral_any_drop"]])
     with (out / "baselines_rankings.csv").open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["Method", "Book"] + list(TRANSLATIONS) + ["Order", "Kendall W", "Significant pairs",
@@ -610,6 +766,24 @@ def markdown(res: dict) -> str:
         for t in res["mcnemar"]:
             L.append(f"| {t['method']} | {t['pairs']} | {f(t['ref_rate'])} | {f(t['method_rate'])} | "
                      f"{t['only_ref']} | {t['only_method']} | {t['p']:.3g} |")
+    if res.get("calibrated"):
+        L += ["", "## Detection at matched specificity (at most 5% false alarms)", "",
+              f"Same-meaning comparisons: {res['neutral_controls']} meaning-preserving edits of the controls "
+              "(contraction ↔ full form, US ↔ UK spelling, curly → straight quotes; same number per translation) "
+              "and, for methods whose verdicts vary between runs, two judgements of the identical text. τ is the "
+              "smallest score drop that at most 5% of these comparisons exceed; a planted error counts as detected "
+              "when its drop exceeds τ. SATE's targeted verdicts need no threshold (false alarms 1.5%).", "",
+              "| Method | " + " | ".join(KINDS) + " | All | τ | False alarms at τ | Null comparisons | Neutral edits: any drop |",
+              "|---|" + "---|" * (len(KINDS) + 5)]
+        for r in res["calibrated"]:
+            L.append(f"| {r['method']} | " + " | ".join(f(r[k]) for k in KINDS) + f" | {f(r['all'])} | {r['tau']} | "
+                     f"{r['null_false_alarm']} | {r['null_n']} | "
+                     f"{'—' if r['neutral_any_drop'] is None else r['neutral_any_drop']} |")
+    if res.get("neutral_spans"):
+        L += ["", "Error spans placed on the edited words of a meaning-preserving edit (contraction and spelling "
+                  "edits; localisation false alarms):", "", "| Method | Edits | False alarms |", "|---|---|---|"]
+        for r in res["neutral_spans"]:
+            L.append(f"| {r['method']} | {r['n']} | {f(r['false_alarm'])} |")
     if res["rankings"]:
         L += ["", "## Order of the translations", "",
               "Mean score per source sentence (SATE: fidelity; baselines: their own scale, so only the order and the "

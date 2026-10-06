@@ -83,6 +83,39 @@ scores, so an item counts as detected when at least one judge marks it.
 **Paired comparison.** An exact McNemar test compares each method with SATE (Claude+GPT,
 targeted, sense) on the pairs both can assess.
 
+### Meaning-preserving controls and matched specificity (added after the first baseline results)
+
+The deterministic COMET models give no false-alarm rate in the planted-error benchmark, because
+an identical text always gets the same score. Their detection rates were therefore not comparable
+with those of methods that do have one.
+
+This analysis was added after the first baseline results had been seen, and before any of the
+texts below was scored. It uses **meaning-preserving edits** of the same controls (`neutral.jsonl`):
+- one edit per text, the first that applies, in this order:
+  - contraction ↔ full form ("do not" ↔ "don't", "cannot" ↔ "can't");
+  - US ↔ UK spelling (toward/towards, honor/honour, …);
+  - curly → straight quotation marks.
+- Ambiguous forms are never touched: 's (is / has), 've, "let us".
+- The same number of texts per translation is drawn with a fixed seed (26 each, 104 in all).
+
+**Null comparisons** are comparisons between texts with the same meaning:
+- the meaning-preserving edits, for every method that scored them;
+- for SATE and GEMBA-MQM, whose verdicts vary between runs, two judgements of the identical text.
+
+For each score-based method, τ is the smallest score drop that at most 5% of the null comparisons
+exceed. A planted error counts as detected only when its drop exceeds τ (**detection at matched
+specificity**). The report also gives:
+- the share of meaning-preserving edits with *any* score drop;
+- for span-based methods, how often an error span falls on the edited words of a contraction or
+  spelling edit. Quote edits touch the whole quotation and are left out of this count.
+
+```
+python -m sps_validation.baselines export                                      # adds the 104 edited texts
+python -m sps_validation.baselines comet cometkiwi --set neutral               # → scores/cometkiwi.neutral.jsonl
+python -m sps_validation.baselines comet xcomet --set neutral --gpus 1 --half  # → scores/xcomet.neutral.jsonl
+python -m sps_validation.baselines gemba gpt --set neutral                     # optional, ≈ $0.40
+```
+
 ### Order of the translations
 
 Each method also scores every main segment (1,980 groups). A segment's score is given to each of
