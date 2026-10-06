@@ -177,8 +177,9 @@ def run_comet(name: str, which: str, batch: int, gpus: int | None, model_name: s
     try:
         import torch
         from comet import download_model, load_from_checkpoint
-    except ImportError:
-        raise SystemExit("pip install unbabel-comet  (needs Python 3.10–3.12; see docs/BASELINES.md)")
+    except ImportError as e:
+        raise SystemExit(f"cannot import COMET ({type(e).__name__}: {e}). "
+                         "pip install unbabel-comet; see docs/BASELINES.md")
     model_id = model_name or COMET_MODELS[name]
     path = BASE / "scores" / f"{name}.jsonl"
     done = {r["key"] for r in _read(path)}
