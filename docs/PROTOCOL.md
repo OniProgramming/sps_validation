@@ -265,6 +265,11 @@ One request is one alignment group per translation: 13,636 requests per judge (G
 
 ## 11. Decision log
 
+- v1.2 (at a reviewer's request, after the main results; main results unchanged):
+  - Ablations A1–A6 recomputed from the existing verdicts (`ablation.py`).
+  - Baselines COMETKiwi, xCOMET-XL and GEMBA-MQM on the same 240 planted-error pairs and
+    the same sentences (`baselines.py`).
+  - Detection definitions fixed before any baseline was run: `docs/BASELINES.md`.
 - v1.1 (after pilot 3: agreement sense 88%, source 67%; frozen for the full run):
   - *Sense conveyed* is the primary dimension. *Source preserved* is reported as a secondary
     dimension. Its lower inter-judge agreement in the pilot (67%) is stated as a limitation,

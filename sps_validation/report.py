@@ -69,8 +69,22 @@ DIMENSIONS = {"sense": "outcome", "source": "source_outcome"}
 DIM_LABEL = {"sense": "Sense conveyed", "source": "Source preserved"}
 
 
+def outcome_score(outcome: str, w: float = 0.5, binary: str | None = None) -> float:
+    """Score of one outcome. Primary scoring: retained 1, partial w (0.5), lost/distorted 0.
+    Ablations: binary="lenient" (partial counts as preserved), binary="strict" (it does not)."""
+    if binary == "lenient":
+        return 1.0 if outcome in ("retained", "partial") else 0.0
+    if binary == "strict":
+        return 1.0 if outcome == "retained" else 0.0
+    return w if outcome == "partial" else SCORE[outcome]
+
+
 def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
-                  key: str = "outcome") -> list[dict]:
+                  key: str = "outcome", w: float = 0.5, binary: str | None = None,
+                  distortion: bool = True, additions: bool = True,
+                  exclude: frozenset = frozenset()) -> list[dict]:
+    """Per-sentence scores. The keyword options exist for the ablation studies (ablation.py);
+    their defaults are the primary, prespecified scoring."""
     rows = []
     for req in requests:
         per_judge = {j: feature_outcomes(r[req["id"]]) for j, r in results.items() if req["id"] in r}
@@ -85,6 +99,8 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
             counts = Counter()
             translit = Counter()
             for f in fl:
+                if f["class"] in exclude:
+                    continue
                 # Only judges that actually scored this feature count; each gets weight
                 # 1/(number of such judges), so scores and outcome counts use the same weights
                 # and a refusal or a missing answer cannot shift the result.
@@ -92,7 +108,7 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
                            if (o := fo.get(f["fid"])) and o.get(key) in SCORE]
                 if not answers:
                     continue
-                vals = [SCORE[o[key]] for o in answers]
+                vals = [outcome_score(o[key], w, binary) for o in answers]
                 for o in answers:
                     counts[o[key]] += 1 / len(answers)
                     if o.get("transliterated"):
@@ -103,8 +119,9 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
             if not scores:
                 continue
             S, N = sum(scores), len(scores)
-            U = np.mean([len(a) for a in adds.values()]) * len(fl) / max(n_bead, 1) if adds else 0.0
-            D = counts["distorted"]
+            U = np.mean([len(a) for a in adds.values()]) * len(fl) / max(n_bead, 1) if adds and additions else 0.0
+            # A binary taxonomy has no "distorted" category; without distortion it counts as plain loss.
+            D = counts["distorted"] if distortion and not binary else 0.0
             R = S / N
             P = ratio(S, S + D + U)
             F = harmonic(P, R)
@@ -117,7 +134,7 @@ def sentence_rows(requests: list[dict], results: dict, units: dict, feats: dict,
                 "retained": round(counts["retained"], 2), "partial": round(counts["partial"], 2),
                 "lost": round(counts["lost"], 2), "distorted": round(D, 2), "unsupported_additions": round(U, 3),
                 "transliterated_features": round(sum(translit.values()), 2),
-                "transliterated_retained": round(translit["retained"] + 0.5 * translit["partial"], 2),
+                "transliterated_retained": round(translit["retained"] + w * translit["partial"], 2),
                 **{f"R_{c}": round(sum(v) / len(v), 4) if v else "" for c, v in
                    ((c, cls_scores.get(c, [])) for c in CLASSES)},
                 **{f"n_{c}": len(cls_scores.get(c, [])) for c in CLASSES},

@@ -1,0 +1,1 @@
+unbabel-comet==2.2.7  # COMETKiwi / xCOMET baselines only; needs Python 3.10–3.12 (numpy < 2)

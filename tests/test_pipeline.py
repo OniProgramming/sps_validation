@@ -230,5 +230,47 @@ class PerturbationTest(unittest.TestCase):
         self.assertEqual((new, fid), ("and he did eat.", "U/1"))
 
 
+
+class AblationBaselineTest(unittest.TestCase):
+    def test_outcome_score_variants(self):
+        from sps_validation.report import outcome_score
+        self.assertEqual([outcome_score(o) for o in ("retained", "partial", "lost", "distorted")], [1, 0.5, 0, 0])
+        self.assertEqual(outcome_score("partial", w=0.25), 0.25)
+        self.assertEqual(outcome_score("partial", binary="lenient"), 1)
+        self.assertEqual(outcome_score("partial", binary="strict"), 0)
+        self.assertEqual(outcome_score("distorted", binary="lenient"), 0)
+
+    def test_edit_region(self):
+        from sps_validation.baselines import edit_region
+        c, p = "in the heavenly places with Christ", "in the places with Christ"
+        e = edit_region(c, p)
+        self.assertIn("heavenly", c[slice(*e["control"])])
+        self.assertEqual(p[slice(*e["perturbed"])], "the places")  # a deletion: the words on both sides
+        self.assertEqual(e["removed"], ["heavenly"])
+        e = edit_region("he said to them", "he will say to them")
+        self.assertEqual(e["removed"], ["said"])
+        self.assertEqual(e["inserted"], ["will", "say"])
+        e = edit_region("I can’t go", "I can go")
+        self.assertEqual(e["removed"], ["can't"])
+
+    def test_gemba_scoring(self):
+        from sps_validation.gemba_mqm import errors, score
+        ans = 'Critical:\nno-error\nMajor:\naccuracy/omission - "heavenly"\nMinor:\nstyle/awkward - "the places"\n'
+        self.assertEqual(score(ans), -6)
+        self.assertEqual([e["span"] for e in errors(ans)], ["heavenly", "the places"])
+        self.assertEqual(score("Critical:\nnon-translation - \"x\"\nMajor:\naccuracy/addition - \"y\"\n"), -25)
+        self.assertEqual(score("Critical:\nno-error\nMajor:\nno-error\nMinor:\nno-error\n"), 0)
+        self.assertIsNone(score(None))
+
+    def test_gemba_span_hit(self):
+        from sps_validation.baselines import edit_region, gemba_span_hit
+        c, p = "in the heavenly places", "in the places"
+        e = edit_region(c, p)
+        rec = lambda q: {"status": "ok", "errors": [{"span": q}]}
+        self.assertTrue(gemba_span_hit(rec("heavenly"), p, e["perturbed"], e["removed"]))  # names the deleted word
+        self.assertTrue(gemba_span_hit(rec("places"), p, e["perturbed"]))                  # on the edited words
+        self.assertFalse(gemba_span_hit(rec("in"), p, e["perturbed"], e["removed"]))
+
+
 if __name__ == "__main__":
     unittest.main()
