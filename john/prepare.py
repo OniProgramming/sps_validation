@@ -150,10 +150,13 @@ VERSE_NO = re.compile(r"(?:(?<=\s)|^)(\d{1,2})(?=[^\d\s])")
 TITLE = re.compile(r"^(SPS\s*)?(John|Ioan)\s*1$", re.I)
 
 
-def _split_verses(text: str, spans: list[dict]) -> list[tuple[int, str, list[str]]]:
+VERSE_MARK = re.compile(r"⟦(\d+)⟧ ?")
+
+
+def _split_verses(text: str, spans: list[dict], pattern: re.Pattern = VERSE_NO) -> list[tuple[int, str, list[str]]]:
     """(verse, text, transliterations) from a paragraph with inline verse numbers; verse 1 may
     be unnumbered. `spans` are the italic transliteration spans (character offsets in `text`)."""
-    marks = [(m.start(), m.end(), int(m.group(1))) for m in VERSE_NO.finditer(text)]
+    marks = [(m.start(), m.end(), int(m.group(1))) for m in pattern.finditer(text)]
     if not marks or marks[0][0] > 0:  # text before the first number: verse 1 (unnumbered)
         marks = [(0, 0, 1)] + marks
     verses = []
@@ -161,6 +164,36 @@ def _split_verses(text: str, spans: list[dict]) -> list[tuple[int, str, list[str
         end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
         verses.append((n, text[e:end].strip(), [x["text"] for x in spans if e <= x["start"] < end]))
     return verses
+
+
+def _mark_verses(runs: list) -> list:
+    """Verse numbers stand glued to the first word ("18Theon"). In the main study the manuscript
+    had none, and ingest._spans reads an italic word only when the whole word is italic; so each
+    number is replaced by a separate marker "⟦18⟧ " before the runs are read."""
+    from sps_validation.docx_reader import Run
+
+    text = "".join(r.text for r in runs)
+    marks = {m.start(): m for m in VERSE_NO.finditer(text)}
+    out, pos = [], 0
+    for r in runs:
+        buf, i = "", 0
+        while i < len(r.text):
+            m = marks.get(pos + i)
+            if m:
+                if buf:
+                    out.append(Run(buf, r.italic, r.colored))
+                    buf = ""
+                out.append(Run(f"⟦{m.group(1)}⟧ ", False, False))
+                i += m.end() - m.start()  # a number never spans two runs in practice; checked below
+            else:
+                buf += r.text[i]
+                i += 1
+        if buf:
+            out.append(Run(buf, r.italic, r.colored))
+        pos += len(r.text)
+    if "".join(r.text for r in out).count("⟦") != len(marks):
+        raise SystemExit("SPS docx: a verse number is split across formatting runs")
+    return out
 
 
 def _sps() -> tuple[list[list[tuple[int, str, list[str] | None]]], Path]:
@@ -175,7 +208,7 @@ def _sps() -> tuple[list[list[tuple[int, str, list[str] | None]]], Path]:
         from sps_validation.ingest import REMOVED_FROM_EVAL, _spans, strip_spans
 
         for runs in read_paragraphs(str(docx)):
-            text, spans = _spans(runs)
+            text, spans = _spans(_mark_verses(runs))
             if TITLE.match(text):
                 continue
             text, spans = strip_spans(text, spans, REMOVED_FROM_EVAL)
@@ -187,7 +220,7 @@ def _sps() -> tuple[list[list[tuple[int, str, list[str] | None]]], Path]:
                 if body:
                     sp = [x | {"start": x["start"] - lo} for x in spans
                           if x["type"] == "translit" and lo <= x["start"] < lo + len(body)]
-                    paras.append(_split_verses(body, sp))
+                    paras.append(_split_verses(body, sp, VERSE_MARK))
                 start += len(block) + 1
         src = docx
     else:
