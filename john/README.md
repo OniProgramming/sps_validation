@@ -61,3 +61,19 @@ Results are written to `build/john/report/`:
 - `summary.json`.
 
 `data/input/john/` and `build/john/judge/` contain the SPS text. They are not committed.
+
+## Ablations and baselines
+
+The same ablations (A1–A6) and baselines (COMETKiwi, xCOMET, GEMBA-MQM) as for Genesis and
+Ephesians. They run the unchanged `sps_validation.ablation` and `sps_validation.baselines` on John 1's
+folders. Step by step: `john/PASI_BASELINES.md`.
+
+```
+python -m john.ablation                            # free → build/john/report/ablation/
+python -m john.baselines export                    # free → build/john/baselines/items.jsonl …
+python -m john.baselines gemba gpt --set pairs     # ≈ $1.8 (asks yes)
+python -m john.baselines gemba gpt --set neutral   # ≈ $0.3
+# COMET models: notebooks/baselines_comet.ipynb on Kaggle with John's items.jsonl → scores in build/john/baselines/scores/
+python -m john.baselines report                    # → build/john/report/baselines/
+```
+
