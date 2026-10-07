@@ -27,8 +27,15 @@ Only the inputs and the output folder (`build/john/`) differ.
   alignment keys. The judges decide by themselves what is transliterated.
 - **Alignment accuracy.** It is now measured for SPS too, from its inline verse numbers. This is
   a diagnostic only: the alignment itself does not use them.
-- **No sample, retest or planted errors.** All 57 sentences of John 1 are judged once by each
-  judge. The instrument's validity checks are those of the main study.
+- **Instrument checks.** As in the main study, three sets are judged:
+  - all 57 sentences of John 1, with no sample;
+  - planted errors, each with its unperturbed control, built by the same functions with the same
+    settings (`validate.build_perturbations` with `plan.PER_CELL` = 10, same seed);
+  - a 10% retest.
+
+  John 1 has few candidates for some error types: 2 adjective drops and 3 number flips per
+  translation. As in the main study, every translation gets the same number of cases. The
+  rule cross-checks (NEG, NUM) and the agreement between the judges are reported too.
 - **Status.** The text and the analysis were added after the main results. This is an
   exploratory extension, not part of the preregistered protocol.
 

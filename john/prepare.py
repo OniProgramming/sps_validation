@@ -1,4 +1,5 @@
-"""Prepare John 1: sources, translations, sentence units, features, alignment, judge requests.
+"""Prepare John 1: sources, translations, sentence units, features, alignment, judge requests
+(main set, planted errors with their controls, retest).
 
 Every step calls the unchanged SATE functions; only the inputs and the output folder
 (build/john/) differ from the Genesis/Ephesians run.
@@ -39,6 +40,8 @@ from sps_validation import features as F
 from sps_validation import judge as J
 from sps_validation import segment as S
 from sps_validation import sources as SRC
+from sps_validation import validate as V
+from sps_validation.plan import PER_CELL
 
 SOURCES_DIR = Path("data/sources_john")
 INPUT_DIR = Path("data/input/john")
@@ -371,6 +374,20 @@ def main(argv: list[str]) -> None:
     J.write_set("main", reqs)
     print(f"{len(reqs)} judge requests per judge "
           f"({ {t: sum(r['translation'] == t for r in reqs) for t in TRANSLATIONS} }) → {J.OUT}/sets/main.jsonl")
+    validation_sets()
+
+
+def validation_sets() -> None:
+    """Planted errors (with their unperturbed controls) and the 10% retest, by the main study's
+    own functions (validate.build_perturbations, build_retest) with its settings (plan.PER_CELL,
+    the same seeds). Error types with fewer candidates in John 1 get fewer cases, the same
+    number for every translation, exactly as in the main study."""
+    V.OUT, V.load_sources = BUILD / "judge", load_units
+    pert = V.build_perturbations(PER_CELL)
+    J.write_set("perturb", pert)
+    retest = V.build_retest()
+    J.write_set("retest", retest)
+    print(f"planted errors: {len(pert) // 2} pairs (perturbed + control); retest: {len(retest)} requests")
 
 
 if __name__ == "__main__":

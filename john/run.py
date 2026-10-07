@@ -1,5 +1,7 @@
 """Run SATE on John 1: prepare, show the cost, judge (after you type yes), report.
 
+As in the main study, three sets are judged: main, planted errors (+ controls) and a 10% retest.
+
 The judges are those of the main study (sps_validation.judge: the same models, instructions,
 schema, settings and Batch APIs). Only the folder changes: build/john/judge/.
 
@@ -20,6 +22,8 @@ from pathlib import Path
 from sps_validation import judge as J
 
 from . import prepare, report
+
+SETS = ("main", "perturb", "retest")  # as in the main study
 
 # Used only for the estimate when the main study's own results (build/judge/results/) are absent:
 # tokens per character of prompt, output tokens per information item (GPT includes reasoning).
@@ -47,7 +51,7 @@ def measured_rate(judge: str) -> dict | None:
 
 def estimate(judges: list[str]) -> float:
     prices = json.loads(Path("config/prices.json").read_text(encoding="utf-8"))
-    reqs = J._jsonl(J.OUT / "sets/main.jsonl")
+    reqs = [r for name in SETS for r in J._jsonl(J.OUT / f"sets/{name}.jsonl")]
     chars = sum(len(r["prompt"]) + len(J.INSTRUCTIONS) for r in reqs)
     items = sum(len(r["fids"]) for r in reqs)
     total = 0.0
@@ -60,7 +64,7 @@ def estimate(judges: list[str]) -> float:
         cost = (chars * rate["in_per_char"] * p["input"] + items * rate["out_per_item"] * p["output"]) / 1e6
         cost *= prices["batch_discount"]
         total += cost
-        print(f"  {j} ({model}): {len(reqs)} requests, {items} items — about ${cost:.2f} ({src})")
+        print(f"  {j} ({model}): {len(reqs)} requests (main + planted errors + retest), {items} items — about ${cost:.2f} ({src})")
     return total
 
 
@@ -82,9 +86,11 @@ def main(argv: list[str]) -> None:
     if input("Type yes to start: ").strip().lower() != "yes":
         raise SystemExit("not started")
     for j in judges:
-        J.submit_only(j, "main")  # both batches run at the same time
+        for name in SETS:
+            J.submit_only(j, name)  # all batches run at the same time
     for j in judges:
-        J.run(j, "main")
+        for name in SETS:
+            J.run(j, name)
     report.main(["report"])
 
 

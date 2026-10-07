@@ -18,6 +18,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from sps_validation import ablation as A
 from sps_validation import report as R
 from sps_validation.judge import TRANSLATIONS, _jsonl
 
@@ -31,10 +32,11 @@ def write_mock(root: Path) -> None:
     """Random judgements, for testing the pipeline only (as report.write_mock)."""
     rng = random.Random(1)
     outcomes = ["retained"] * 7 + ["partial", "lost", "distorted"]
-    reqs = _jsonl(JUDGE_DIR / "sets/main.jsonl")
-    for j in R.JUDGES:
+    for name in ("main", "perturb", "retest"):
+      reqs = _jsonl(JUDGE_DIR / f"sets/{name}.jsonl")
+      for j in R.JUDGES:
         (root / j).mkdir(parents=True, exist_ok=True)
-        with (root / j / "main.jsonl").open("w", encoding="utf-8") as f:
+        with (root / j / f"{name}.jsonl").open("w", encoding="utf-8") as f:
             for r in reqs:
                 res = {"status": "ok", "missing": [],
                        "features": [{"fid": x, "outcome": rng.choice(outcomes), "source_outcome": rng.choice(outcomes),
@@ -42,7 +44,7 @@ def write_mock(root: Path) -> None:
                                      "displaced": False, "reason": "MOCK"} for x in r["fids"]],
                        "additions": [{"english": "", "type": rng.choice(["grammatical", "unsupported"]),
                                       "reason": "MOCK"} for _ in range(rng.randint(0, 2))]}
-                meta = {k: r[k] for k in ("id", "translation", "book", "units")}
+                meta = {k: r[k] for k in ("id", "translation", "book", "units", "perturbation", "base_id") if k in r}
                 f.write(json.dumps(meta | {"model": "MOCK", "result": res}) + "\n")
 
 
@@ -79,6 +81,21 @@ def build(root: Path, out: Path, label: str) -> dict:
     if len(main) == 2:
         summary["judge_agreement"] = {d: R.agreement(main["claude"], main["gpt"], reqs, feats_by_fid, k)
                                       for d, k in R.DIMENSIONS.items()}
+    retest = R.load_results(root, "retest")
+    rt_ids = {r["id"] for r in _jsonl(JUDGE_DIR / "sets/retest.jsonl")}
+    summary["test_retest"] = {
+        d: {j: R.agreement(main[j], retest[j], [r for r in reqs if r["id"] in rt_ids], feats_by_fid, k).get("ALL")
+            for j in retest if j in main}
+        for d, k in R.DIMENSIONS.items()}
+    pert = R.load_results(root, "perturb")
+    if pert:
+        pert_reqs = _jsonl(JUDGE_DIR / "sets/perturb.jsonl")
+        summary["perturbation"] = {d: R.perturbation_summary(pert_reqs, pert, main, k)
+                                   for d, k in R.DIMENSIONS.items()}
+        both = tuple(j for j in R.JUDGES if j in pert and j in main)
+        summary["perturbation_combined"] = {  # judges combined by their mean score, as in the article
+            "judges": "+".join(both),
+            **{d: A.detection(pert_reqs, pert, main, both, k) for d, k in R.DIMENSIONS.items()}}
     summary["rule_crosscheck"] = R.rule_crosscheck(reqs, main, units, feats)
     summary["unaligned_english"] = {
         t: {"pieces": sum(len(r.get("unaligned_english", [])) for r in reqs if r["translation"] == t),
@@ -132,6 +149,29 @@ def markdown(s: dict) -> str:
             alpha = "—" if x.get("alpha") is None else f"{x['alpha']:.3f}"
             L.append(f"- {R.DIM_LABEL[d]}: α = {alpha}, exact agreement {x.get('exact_agreement')}, n = {x.get('n')}")
         L.append("")
+    for d, rt in s.get("test_retest", {}).items():
+        L += [f"## Test–retest — {R.DIM_LABEL[d]} (same judge, 10% of requests judged again)", ""]
+        L += [f"- {j}: α = {v['alpha']}, exact agreement {v['exact_agreement']}, n = {v['n']}" for j, v in rt.items() if v]
+        L.append("")
+    if s.get("perturbation_combined"):
+        c = s["perturbation_combined"]
+        L += [f"## Planted errors — judges combined ({c['judges']}), detection rate (false alarms on the identical control)",
+              "", "| Error | cases | Sense conveyed | Source preserved |", "|---|---|---|---|"]
+        for k in list(R.KINDS) + ["all"]:
+            a, b = c["sense"][k], c["source"][k]
+            L.append(f"| {k} | {a['cases']} | {a['rate']} ({a['false_alarm_rate']}) | {b['rate']} ({b['false_alarm_rate']}) |")
+        L.append("")
+    for d, per in s.get("perturbation", {}).items():
+        for j, v in per.items():
+            L += [f"## Planted errors — {j}, {R.DIM_LABEL[d]}", "",
+                  "| Error | " + " | ".join(TRANSLATIONS) + " | all (false alarms) |",
+                  "|---|" + "---|" * (len(TRANSLATIONS) + 1)]
+            for k in R.KINDS:
+                cells = [v["detection"].get(f"{t}.{k}", {}).get("rate") for t in TRANSLATIONS]
+                L.append(f"| {k} | " + " | ".join("—" if x is None else f"{x:.2f}" for x in cells) +
+                         f" | {v['by_kind'][k]['rate']} ({v['by_kind'][k]['false_alarm_rate']}) |")
+            L += ["", f"Changes on untouched items between perturbed text and its control: "
+                      f"{v['collateral_change_rate']['rate']}", ""]
     if s.get("alignment"):
         L += ["## Alignment (verse-free aligner; verse numbers used only to check it)", "",
               "| Translation | English pieces | Sentences in the right verse | Pieces in the right verse |", "|---|---|---|---|"]
