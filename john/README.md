@@ -16,15 +16,18 @@ Only the inputs and the output folder (`build/john/`) differ.
 | WEB | eBible corpus, `engwebp`, pinned commit | Same text: identical on all 155 Ephesians verses |
 | BSB | `data/input/john/bsb.txt` (official download) | Same printing. Without the file, the eBible copy is used (an earlier printing) and a warning is shown |
 | OEB | Release 2025.6, US spelling, pinned commit | Same edition |
-| SPS | `data/input/john/SPS_John1.txt` | Verse numbers and ◊ removed, `[[…]]` kept; the aligner gets it by paragraph, without verse numbers |
+| SPS | `data/input/john/SPS_John1.docx` (or `.txt`) | Read with the main study's own `ingest` functions: transliterations from italics, braces and `*` removed, `[[…]]` kept. Verse numbers and ◊ removed. The aligner gets it by paragraph, without verse numbers |
 | Bases | WEB → RP, OEB → WH, BSB and SPS → SBLGNT | Same as for the New Testament |
 
 ## What differs from the main study
 
-- **SPS transliterations.** In the main study they were read from the italics of the manuscript.
-  The plain text has no italics, so here a transliteration is a word with a diacritic (archē), or
-  a word with no part found in the WEB/BSB/OEB vocabulary (kosmos). They are used only as
-  alignment keys. The judges decide by themselves what is transliterated.
+- **SPS transliterations.** With the `.docx`, they are read from the italics, exactly as in the
+  main study. Only with a plain `.txt` are they recognised automatically:
+  - a word with a diacritic (archē);
+  - or a word with no part found in the WEB/BSB/OEB vocabulary (kosmos).
+
+  In both cases they are only alignment keys. The judges decide by themselves what is
+  transliterated.
 - **Alignment accuracy.** It is now measured for SPS too, from its inline verse numbers. This is
   a diagnostic only: the alignment itself does not use them.
 - **Instrument checks.** As in the main study, three sets are judged:

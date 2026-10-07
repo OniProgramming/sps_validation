@@ -14,8 +14,8 @@ Inputs
   BSB        data/input/john/bsb.txt — the official download (https://bereanbible.com/bsb.txt),
              the printing of the main study. Without it the eBible copy is used, with a warning:
              that copy is an earlier printing (3 of 155 Ephesians verses differ).
-  SPS        data/input/john/SPS_John1.txt — the author's text, verse numbers inline, ◊ between
-             paragraphs. Evaluated text: verse numbers and ◊ removed; [[…]] kept, as in the main study.
+  SPS        data/input/john/SPS_John1.docx (transliterations in italics, as in the main study),
+             else SPS_John1.txt — the author's text, verse numbers inline, ◊ between paragraphs. Evaluated text: verse numbers and ◊ removed; [[…]] kept, as in the main study.
              As in the main study, SPS reaches the aligner by paragraph, without verse numbers.
 
 Bases (as in the main study for the New Testament): WEB → Robinson-Pierpont, OEB → Westcott-Hort,
@@ -147,28 +147,66 @@ def bsb_chapter() -> tuple[dict[int, str], str]:
 VERSE_NO = re.compile(r"(?:(?<=\s)|^)(\d{1,2})(?=[^\d\s])")
 
 
+TITLE = re.compile(r"^(SPS\s*)?(John|Ioan)\s*1$", re.I)
+
+
+def _split_verses(text: str, spans: list[dict]) -> list[tuple[int, str, list[str]]]:
+    """(verse, text, transliterations) from a paragraph with inline verse numbers; verse 1 may
+    be unnumbered. `spans` are the italic transliteration spans (character offsets in `text`)."""
+    marks = [(m.start(), m.end(), int(m.group(1))) for m in VERSE_NO.finditer(text)]
+    if not marks or marks[0][0] > 0:  # text before the first number: verse 1 (unnumbered)
+        marks = [(0, 0, 1)] + marks
+    verses = []
+    for i, (s, e, n) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+        verses.append((n, text[e:end].strip(), [x["text"] for x in spans if e <= x["start"] < end]))
+    return verses
+
+
+def _sps() -> tuple[list[list[tuple[int, str, list[str] | None]]], Path]:
+    """SPS_John1.docx when present (transliterations = italic words, read by the main study's own
+    ingest._spans; braces and * marks removed by ingest.strip_spans, as in the main study);
+    otherwise SPS_John1.txt (no formatting: transliterations recognised later, see
+    transliterations()). ◊ separates paragraphs in either."""
+    docx = INPUT_DIR / "SPS_John1.docx"
+    paras = []
+    if docx.exists():
+        from sps_validation.docx_reader import read_paragraphs
+        from sps_validation.ingest import REMOVED_FROM_EVAL, _spans, strip_spans
+
+        for runs in read_paragraphs(str(docx)):
+            text, spans = _spans(runs)
+            if TITLE.match(text):
+                continue
+            text, spans = strip_spans(text, spans, REMOVED_FROM_EVAL)
+            # ◊ splits a paragraph; offsets of the pieces are kept
+            start = 0
+            for block in text.split("◊"):
+                lo = start + len(block) - len(block.lstrip())
+                body = block.strip()
+                if body:
+                    sp = [x | {"start": x["start"] - lo} for x in spans
+                          if x["type"] == "translit" and lo <= x["start"] < lo + len(body)]
+                    paras.append(_split_verses(body, sp))
+                start += len(block) + 1
+        src = docx
+    else:
+        src = INPUT_DIR / "SPS_John1.txt"
+        for block in src.read_text(encoding="utf-8").split("◊"):
+            text = re.sub(r"\s+", " ", block).strip()
+            if text and not TITLE.match(text):
+                paras.append([(n, t, None) for n, t, _ in _split_verses(text, [])])
+    numbers = [n for p in paras for n, _, _ in p]
+    if numbers != list(range(1, len(numbers) + 1)):
+        raise SystemExit(f"{src}: verse numbers not consecutive: {numbers}")
+    return paras, src
+
+
 def sps_paragraphs() -> list[list[tuple[int, str]]]:
     """The author's text: verse numbers inline (verse 1 unnumbered), ◊ between paragraphs.
     Evaluated text = the running text without verse numbers and ◊; [[…]] is kept.
     Returns the paragraphs, each a list of (verse, text)."""
-    raw = (INPUT_DIR / "SPS_John1.txt").read_text(encoding="utf-8")
-    paras = []
-    for block in raw.split("◊"):
-        text = re.sub(r"\s+", " ", block).strip()
-        if not text:
-            continue
-        marks = [(m.start(), m.end(), int(m.group(1))) for m in VERSE_NO.finditer(text)]
-        if not marks or marks[0][0] > 0:  # text before the first number: verse 1 (unnumbered)
-            marks = [(0, 0, 1)] + marks
-        verses = []
-        for i, (s, e, n) in enumerate(marks):
-            end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
-            verses.append((n, text[e:end].strip()))
-        paras.append(verses)
-    numbers = [n for p in paras for n, _ in p]
-    if numbers != list(range(1, len(numbers) + 1)):
-        raise SystemExit(f"SPS_John1.txt: verse numbers not consecutive: {numbers}")
-    return paras
+    return [[(n, t) for n, t, _ in p] for p in _sps()[0]]
 
 
 def sps_chapter() -> dict[int, str]:
@@ -188,7 +226,7 @@ def english_vocabulary() -> set[str]:
 def transliterations(text: str, vocab: set[str]) -> list[str]:
     """SPS words that are not English: a letter with a diacritic (archē, zōē) or no part
     found in the English vocabulary (kosmos, sarx). In the main study the same words were
-    marked by italics in the SPS manuscript; here the text has no formatting."""
+    marked by italics in the SPS manuscript; used only when the text has no formatting (.txt)."""
     out = []
     for w in re.findall(r"[^\W\d_][\w’'-]*", text):
         parts = [p for p in re.split(r"[-’']", w) if p]
@@ -205,8 +243,11 @@ def translations() -> dict:
     meta["OEB"] = (f"OEB release {(SOURCES_DIR / 'open-english-bible/VERSION').read_text().strip()}, "
                    f"US spelling (commit {JOHN_SOURCES['open-english-bible']['commit'][:7]})")
     bsb, meta["BSB"] = bsb_chapter()
-    sps = sps_chapter()
-    meta["SPS"] = f"data/input/john/SPS_John1.txt (sha256 {_sha(INPUT_DIR / 'SPS_John1.txt')[:16]})"
+    paras, src = _sps()
+    sps = {n: t for p in paras for n, t, _ in p}
+    italic = {n: tl for p in paras for n, _, tl in p}
+    how = "italics" if src.suffix == ".docx" else "recognised automatically (no formatting)"
+    meta["SPS"] = f"{src} (sha256 {_sha(src)[:16]}); transliterations: {how}"
     vocab = english_vocabulary()
     out = BUILD / "translations"
     out.mkdir(parents=True, exist_ok=True)
@@ -216,7 +257,7 @@ def translations() -> dict:
             for v, text in sorted(verses.items()):
                 rec = {"translation": t, "book": BOOK, "chapter": CHAPTER, "verse": v, "text": text}
                 if t == "SPS":
-                    rec["translit"] = transliterations(text, vocab)
+                    rec["translit"] = italic[v] if italic[v] is not None else transliterations(text, vocab)
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         print(f"{t}: {len(verses)} verses — {meta[t]}")
     (out / "sources.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False), encoding="utf-8")
